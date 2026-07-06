@@ -89,31 +89,90 @@ def _parse_loc(value: str) -> tuple[float | None, float | None]:
 
 @lru_cache(maxsize=4096)
 def _lookup_ip_api(ip: str, timeout: float) -> dict:
+    # 1. Try free.freeipapi.com as primary since it supports HTTPS and allows burst queries
+    try:
+        response = httpx.get(f"https://free.freeipapi.com/api/json/{ip}", timeout=timeout)
+        response.raise_for_status()
+        data = response.json()
+        if isinstance(data, dict) and "ipAddress" in data:
+            data["_source"] = "freeipapi"
+            return data
+    except Exception:
+        pass
+
+    # 2. Try ipapi.co as secondary
+    try:
+        response = httpx.get(f"https://ipapi.co/{ip}/json/", timeout=timeout)
+        response.raise_for_status()
+        data = response.json()
+        if isinstance(data, dict) and not data.get("error"):
+            data["_source"] = "ipapi.co"
+            return data
+    except Exception:
+        pass
+
+    # 3. Try ip-api.com as tertiary
     try:
         response = httpx.get(f"http://ip-api.com/json/{ip}", timeout=timeout)
         response.raise_for_status()
         data = response.json()
         if isinstance(data, dict) and data.get("status") == "success":
+            data["_source"] = "ip-api.com"
             return data
     except Exception:
         pass
+    
     return {}
 
 
 def _parse_ip_api_result(result: dict) -> dict:
-    asn_value = result.get("as") or ""
-    asn_number = _asn_number(asn_value)
-    return {
-        "isp": result.get("isp") or "",
-        "asn": asn_value.split(" ")[0] if asn_value else "",
-        "asn_number": asn_number,
-        "asn_org": result.get("org") or result.get("isp") or "",
-        "network_prefix": "",
-        "country": result.get("country") or "",
-        "region": result.get("regionName") or "",
-        "city": result.get("city") or "",
-        "latitude": result.get("lat"),
-        "longitude": result.get("lon"),
-        "hostname": "",
-        "ip_source": "ip-api.com live",
-    }
+    source = result.get("_source", "live api")
+    if source == "freeipapi":
+        asn_val = result.get("asn") or ""
+        asn_str = f"AS{asn_val}" if asn_val and not str(asn_val).upper().startswith("AS") else str(asn_val)
+        return {
+            "isp": result.get("asnOrganization") or "",
+            "asn": asn_str,
+            "asn_number": _asn_number(asn_str),
+            "asn_org": result.get("asnOrganization") or "",
+            "network_prefix": "",
+            "country": result.get("countryName") or "",
+            "region": result.get("regionName") or "",
+            "city": result.get("cityName") or "",
+            "latitude": result.get("latitude"),
+            "longitude": result.get("longitude"),
+            "hostname": "",
+            "ip_source": "freeipapi live",
+        }
+    elif source == "ipapi.co":
+        asn_value = result.get("asn") or ""
+        return {
+            "isp": result.get("org") or "",
+            "asn": asn_value,
+            "asn_number": _asn_number(asn_value),
+            "asn_org": result.get("org") or "",
+            "network_prefix": result.get("network") or "",
+            "country": result.get("country_name") or result.get("country") or "",
+            "region": result.get("region") or "",
+            "city": result.get("city") or "",
+            "latitude": result.get("latitude"),
+            "longitude": result.get("longitude"),
+            "hostname": "",
+            "ip_source": "ipapi.co live",
+        }
+    else:
+        asn_value = result.get("as") or ""
+        return {
+            "isp": result.get("isp") or "",
+            "asn": asn_value.split(" ")[0] if asn_value else "",
+            "asn_number": _asn_number(asn_value),
+            "asn_org": result.get("org") or result.get("isp") or "",
+            "network_prefix": "",
+            "country": result.get("country") or "",
+            "region": result.get("regionName") or "",
+            "city": result.get("city") or "",
+            "latitude": result.get("lat"),
+            "longitude": result.get("lon"),
+            "hostname": "",
+            "ip_source": "ip-api.com live",
+        }
