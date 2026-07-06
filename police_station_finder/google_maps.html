@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>India Police Station Finder - Google Maps</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    .gm-shell{display:grid;grid-template-columns:380px 1fr;gap:1rem;min-height:calc(100vh - 110px);padding:1rem;max-width:1600px;margin:auto}.gm-sidebar{padding:1rem;overflow:auto;max-height:calc(100vh - 130px)}#googleMap{min-height:calc(100vh - 130px);border-radius:22px;border:1px solid var(--line);box-shadow:var(--shadow);background:var(--surface2)}.gm-controls{display:grid;gap:.75rem}.gm-controls input,.gm-controls select{width:100%;border:1px solid var(--line);background:var(--surface2);color:var(--text);border-radius:12px;padding:.75rem}.gm-list{display:grid;gap:.75rem;margin-top:1rem}.gm-item{padding:.8rem;border:1px solid var(--line);border-radius:16px;background:var(--surface2)}.gm-item h4{margin:.1rem 0}.gm-item p{margin:.2rem 0;font-size:.9rem}.api-row{display:grid;grid-template-columns:1fr auto;gap:.5rem}.warn-box{background:rgba(217,119,6,.12);border:1px solid rgba(217,119,6,.35);padding:.75rem;border-radius:14px;color:var(--text)}@media(max-width:960px){.gm-shell{grid-template-columns:1fr}.gm-sidebar{max-height:none}#googleMap{min-height:70vh}}
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo" aria-hidden="true"><svg viewBox="0 0 64 64"><path d="M32 4 54 12v17c0 15-9.5 26-22 31C19.5 55 10 44 10 29V12L32 4Z"/><path d="M23 30h18M32 21v18"/></svg></div>
+      <div><h1>Police Station Finder</h1><p>Google Maps version</p></div>
+    </div>
+    <nav class="top-actions">
+      <a class="btn ghost" href="index.html">Back to Finder</a>
+      <button id="themeBtn" class="btn ghost" type="button">Dark Mode</button>
+    </nav>
+  </header>
+
+  <main class="gm-shell">
+    <aside class="panel gm-sidebar">
+      <h2>Google Maps Setup</h2>
+      <p class="muted">Paste your Google Maps JavaScript API key. Enable <b>Maps JavaScript API</b> in Google Cloud and restrict the key to your domain/local URL.</p>
+      <div class="api-row">
+        <input id="apiKey" type="password" placeholder="Google Maps JavaScript API key" />
+        <button id="loadMapBtn" class="btn primary" type="button">Load Map</button>
+      </div>
+      <p id="status" class="status">Waiting for API key...</p>
+      <div class="warn-box"><b>Note:</b> Google Maps API may require billing. For testing, use Live Server URL like <code>http://127.0.0.1:5500/*</code> in key restrictions.</div>
+
+      <hr />
+      <div class="gm-controls">
+        <label>Upload CSV
+          <input id="csvFile" type="file" accept=".csv,text/csv" />
+        </label>
+        <label>Search
+          <input id="searchInput" type="search" placeholder="Search station, district, address..." />
+        </label>
+        <label>State
+          <select id="stateFilter"><option value="">All states</option></select>
+        </label>
+        <label>District
+          <select id="districtFilter"><option value="">All districts</option></select>
+        </label>
+        <label>Maximum markers
+          <select id="markerLimit">
+            <option value="500">500</option>
+            <option value="1000" selected>1000</option>
+            <option value="3000">3000</option>
+            <option value="999999">All, may be slow</option>
+          </select>
+        </label>
+        <button id="nearMeBtn" class="btn primary" type="button">Find Nearest to Me</button>
+        <button id="exportBtn" class="btn ghost" type="button">Export Filtered CSV</button>
+      </div>
+
+      <hr />
+      <h3>Results</h3>
+      <p id="countInfo" class="pill">0 records</p>
+      <div id="nearestBox"></div>
+      <div id="resultList" class="gm-list"></div>
+    </aside>
+
+    <section id="googleMap" aria-label="Google Map"></section>
+  </main>
+
+  <script src="google_maps_app.js"></script>
+</body>
+</html>

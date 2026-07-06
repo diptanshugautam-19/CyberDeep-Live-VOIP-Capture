@@ -1,0 +1,142 @@
+parser: pipe
+defaults:
+  provider: dataplane.org
+  tlp: green
+  altid_tlp: clear
+  confidence: 7.5
+  values:
+    - null
+    - null
+    - indicator
+    - lasttime
+    - null
+
+feeds:
+  dnsrd:
+    remote: https://dataplane.org/dnsrd.txt
+    defaults:
+      application: dns
+      portlist: 53
+      protocol: udp
+      tags:
+        - scanner
+        - dns
+        - spoofable
+      description: 'identified as sending recursive DNS queries to a remote host'
+
+  dnsrdany:
+    remote: https://dataplane.org/dnsrdany.txt
+    defaults:
+      application: dns
+      portlist: 53
+      protocol: udp
+      tags:
+        - scanner
+        - dns
+        - spoofable
+      description: 'identified as sending recursive DNS IN ANY queries to a remote host'
+
+  dnsversion:
+    remote: https://dataplane.org/dnsversion.txt
+    defaults:
+      application: dns
+      portlist: 53
+      protocol: udp
+      tags:
+        - scanner
+        - dns
+        - spoofable
+      description: 'identified as sending DNS CH TXT VERSION.BIND queries to a remote host'
+
+  proto41:
+    remote: https://dataplane.org/proto41.txt
+    defaults:
+      description: 'identified as an open IPv4 protocol 41 relay (i.e., IPv6 over IPv4)'
+      tags:
+        - protocol41
+        - proxy
+    values:
+      - null
+      - null
+      - indicator
+      - firsttime
+      - lasttime
+      - null
+
+  # not enough info to be confident they're doing bad things
+  sshclient:
+    remote: https://dataplane.org/sshclient.txt
+    defaults:
+      application: ssh
+      portlist: 22
+      protocol: tcp
+      confidence: 7
+      tags: scanner
+      description: 'has been seen initiating an SSH connection'
+
+  # pinging the protocol, bad stuff..
+  ssh:
+    remote: https://dataplane.org/sshpwauth.txt
+    defaults:
+      application: ssh
+      portlist: 22
+      protocol: tcp
+      confidence: 9
+      tags:
+        - scanner
+        - bruteforce
+      description: 'seen attempting to remotely login using SSH password authentication'
+
+  sipquery:
+    remote: https://dataplane.org/sipquery.txt
+    defaults:
+      application: sip
+      protocol: udp
+      portlist: 5060
+      tags:
+        - scanner
+        - bruteforce
+        - spoofable
+      description: 'seen initiating a SIP OPTIONS query to a remote host'
+
+  sipinvitation:
+    remote: https://dataplane.org/sipinvitation.txt
+    defaults:
+      application: sip
+      protocol: udp
+      portlist: 5060
+      tags:
+        - scanner
+        - bruteforce
+        - spoofable
+      description: 'seen initiating a SIP INVITE operation to a remote host'
+
+  sipregistration:
+    remote: https://dataplane.org/sipregistration.txt
+    application: sip
+    protocol: udp
+    portlist: 5060
+    description: 'seen initiating a SIP REGISTER operation to a remote host'
+
+  smtpdata:
+    remote: https://dataplane.org/smtpdata.txt
+    defaults:
+      application: smtp
+      portlist: 25
+      protocol: tcp
+      tags:
+        - scanner
+        - smtp
+      description: 'identified as SMTP clients sending DATA commands to smtp sensor'
+
+  smtpgreet:
+    remote: https://dataplane.org/smtpgreet.txt
+    defaults:
+      application: smtp
+      protocol: tcp
+      portlist: 25
+      confidence: 7
+      tags:
+        - scanner
+        - smtp
+      description: 'identified as SMTP clients sending unsolicited EHLO/HELO commands to smtp sensor'

@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="CyberDeep - Premium high-tech command center for cybersecurity, OSINT, and digital investigation utilities.">
+  <title>CyberDeep // Digital Command Center</title>
+  
+  <!-- Tailwind CSS Local -->
+  <script src="tailwind.js"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            accent: {
+              lime: '#00d2ff',
+              blue: '#00d2ff',
+              red: '#ff3366',
+              orange: '#ff9900',
+            },
+            cyber: {
+              black: '#04060a',
+              dark: '#0a0e17',
+              light: '#101622',
+            }
+          },
+          fontFamily: {
+            mono: ['Inter'],
+            sans: ['Inter'],
+          }
+        }
+      }
+    }
+  </script>
+  
+  <!-- CSS Link -->
+  <link rel="stylesheet" href="style.css?v=3">
+  
+  <!-- Lucide Icons Library Local -->
+  <script src="lucide.js"></script>
+</head>
+<body class="bg-cyber-black text-slate-100 font-sans min-h-screen relative flex">
+
+  <!-- Background Effects -->
+  <div class="cyber-bg"></div>
+  <div class="cyber-glow-1"></div>
+  <div class="cyber-glow-2"></div>
+  <div class="scan-line"></div>
+
+  <!-- Collapsible Left Sidebar -->
+  <aside id="sidebar" class="fixed inset-y-0 left-0 z-40 w-64 bg-cyber-dark bg-opacity-95 border-r border-white border-opacity-5 flex flex-col justify-between transition-transform duration-300 -translate-x-full md:translate-x-0 md:sticky md:top-0 h-screen">
+    <div>
+      <!-- Brand Logo -->
+      <div class="p-6 border-b border-white border-opacity-5 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="p-2 bg-accent-lime bg-opacity-10 border border-accent-lime rounded-md animate-pulse">
+            <i data-lucide="shield-check" class="w-5 h-5 text-accent-lime"></i>
+          </div>
+          <div>
+            <h1 class="type-card-title font-bold font-mono tracking-wider text-white cyber-glitch" data-text="CYBERDEEP">CYBERDEEP</h1>
+            <p class="text-[9px] font-mono text-text-muted uppercase tracking-widest text-accent-blue">SECURE CONTROL</p>
+          </div>
+        </div>
+        <!-- Close Sidebar (Mobile only) -->
+        <button id="sidebar-close" class="md:hidden text-text-secondary hover:text-white" onclick="document.getElementById('sidebar').classList.add('-translate-x-full')">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <!-- Navigation Categories -->
+      <nav class="p-4">
+        <span class="text-[10px] font-mono font-bold text-text-muted uppercase tracking-widest pl-4 block mb-2">Category Matrix</span>
+        <ul id="category-list" class="space-y-1.5">
+          <!-- Populated by JS -->
+        </ul>
+      </nav>
+    </div>
+
+    <!-- Sidebar footer status -->
+    <div class="p-4 border-t border-white border-opacity-5">
+      <div class="cyber-card p-4 bg-cyber-black bg-opacity-80">
+        <div class="flex items-center justify-between mb-1.5">
+          <span class="text-[10px] font-mono text-text-muted">LINK ENCRYPTION</span>
+          <span class="text-[10px] font-mono text-accent-lime">AES-256</span>
+        </div>
+        <div class="h-1 w-full bg-cyber-light rounded overflow-hidden">
+          <div class="h-full bg-accent-lime w-4/5 animate-pulse"></div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main View Area -->
+  <main class="flex-1 flex flex-col min-w-0">
+    
+    <!-- Top Header Telemetry Widget -->
+    <header class="h-16 border-b border-white border-opacity-5 bg-cyber-dark bg-opacity-80 backdrop-blur-md px-6 flex items-center justify-between sticky top-0 z-30">
+      <div class="flex items-center gap-4">
+        <button id="sidebar-toggle" class="md:hidden text-text-secondary hover:text-white p-2">
+          <i data-lucide="menu" class="w-5 h-5"></i>
+        </button>
+        <div class="hidden sm:flex items-center gap-2 text-xs font-mono text-text-muted bg-white bg-opacity-5 px-3 py-1.5 rounded border border-white border-opacity-5">
+          <span class="inline-block w-2 h-2 rounded-full bg-accent-lime animate-ping"></span>
+          <span class="text-white font-bold">SYSTEM ACTIVE</span>
+          <span class="border-l border-white border-opacity-10 pl-2 ml-1 text-accent-blue">LATENCY: 24MS</span>
+        </div>
+      </div>
+
+      <!-- Live Clock & Settings -->
+      <div class="flex items-center gap-4">
+        <div id="live-clock" class="hidden lg:block text-xs font-mono text-text-secondary select-none">
+          <!-- Live Time -->
+        </div>
+
+        <div class="flex items-center gap-2">
+          <!-- Accessibility High Contrast Toggle -->
+          <button id="high-contrast-toggle" class="p-2 bg-white bg-opacity-5 hover:bg-opacity-10 border border-white border-opacity-5 hover:border-accent-lime rounded-md transition-all text-text-secondary hover:text-white" title="Toggle Accessibility High Contrast">
+            <i data-lucide="eye" class="w-4 h-4"></i>
+          </button>
+
+          <!-- API Gateway Settings -->
+          <button id="api-keys-btn" class="p-2 bg-white bg-opacity-5 hover:bg-opacity-10 border border-white border-opacity-5 hover:border-accent-blue rounded-md transition-all text-text-secondary hover:text-white flex items-center gap-1.5" title="Configure API Credentials">
+            <i data-lucide="key" class="w-4 h-4"></i>
+            <span class="hidden md:inline text-xs font-mono">GATEWAY</span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- SPA Inner Containers -->
+    <div class="flex-1 p-6 md:p-8 space-y-6">
+
+      <!-- View 1: Dashboard View -->
+      <section id="dashboard-screen" class="space-y-6">
+        
+        <!-- Hero Section -->
+        <div class="cyber-card p-6 md:p-8 relative overflow-hidden">
+          <div class="absolute right-0 bottom-0 top-0 w-1/3 opacity-10 bg-[radial-gradient(#00d2ff_1px,transparent_1px)] [background-size:16px_16px] pointer-events-none hidden md:block"></div>
+          
+          <div class="max-w-2xl space-y-4 relative">
+            <span class="cyber-badge cyber-badge-lime text-xs">INVESTIGATION ENVIRONMENT v1.0.4</span>
+            <h2 class="type-page-title font-extrabold font-mono tracking-tight text-white">
+              DIGITAL INVESTIGATION HUB
+            </h2>
+            <p class="text-sm md:text-md text-text-secondary leading-relaxed">
+              Query banking parameters, coordinate systems, and National Cyber Crime Portal repositories. Select a module from the terminal assets matrix below to deploy.
+            </p>
+            
+            <!-- Global Tool Search Input -->
+            <div class="relative max-w-md pt-2">
+              <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-text-muted mt-2">
+                <i data-lucide="search" class="w-5 h-5 text-accent-lime"></i>
+              </span>
+              <input type="text" id="tool-search" placeholder="Query asset database (e.g. IFSC, NCRP...)" class="cyber-input w-full pl-11 py-3 bg-cyber-black border-opacity-20 hover:border-opacity-40">
+            </div>
+          </div>
+        </div>
+
+        <!-- Telemetry Count Cards Grid -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div class="cyber-card p-4 flex items-center justify-between border-opacity-10">
+            <div>
+              <span class="text-xs font-mono text-text-muted uppercase">Global Modules</span>
+              <div class="text-2xl font-bold font-mono text-white mt-1" id="stat-total-tools">7</div>
+            </div>
+            <div class="p-3 bg-white bg-opacity-5 rounded-md border border-white border-opacity-5">
+              <i data-lucide="cpu" class="w-5 h-5 text-accent-lime"></i>
+            </div>
+          </div>
+          <div class="cyber-card p-4 flex items-center justify-between border-opacity-10">
+            <div>
+              <span class="text-xs font-mono text-text-muted uppercase">Starred Nodes</span>
+              <div class="text-2xl font-bold font-mono text-white mt-1" id="stat-favs-tools">0</div>
+            </div>
+            <div class="p-3 bg-white bg-opacity-5 rounded-md border border-white border-opacity-5">
+              <i data-lucide="star" class="w-5 h-5 text-accent-blue"></i>
+            </div>
+          </div>
+          <div class="cyber-card p-4 flex items-center justify-between border-opacity-10">
+            <div>
+              <span class="text-xs font-mono text-text-muted uppercase">Online Agents</span>
+              <div class="text-2xl font-bold font-mono text-accent-lime mt-1" id="stat-active-sessions">148</div>
+            </div>
+            <div class="p-3 bg-white bg-opacity-5 rounded-md border border-white border-opacity-5">
+              <i data-lucide="users" class="w-5 h-5 text-accent-lime"></i>
+            </div>
+          </div>
+        </div>
+
+        <!-- Dual Column: Tools Grid + Session Logs -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          
+          <!-- Available Tools Column (70%) -->
+          <div class="lg:col-span-2 space-y-4">
+            <h3 class="text-sm font-mono font-bold text-text-muted uppercase tracking-widest flex items-center gap-2">
+              <i data-lucide="layout-grid" class="w-4 h-4 text-accent-lime"></i> Asset Repository Matrix
+            </h3>
+            
+            <div id="tools-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <!-- Cards dynamically rendered here -->
+            </div>
+          </div>
+
+          <!-- Session Intel Column (30%) -->
+          <div class="space-y-6">
+            <!-- Recent Activity list -->
+            <div class="space-y-4">
+              <h3 class="text-sm font-mono font-bold text-text-muted uppercase tracking-widest flex items-center gap-2">
+                <i data-lucide="history" class="w-4 h-4 text-accent-blue"></i> Recent Logs
+              </h3>
+              
+              <div class="cyber-card p-4 space-y-3" id="recent-activity-list">
+                <!-- Populated via JS -->
+              </div>
+            </div>
+
+            <!-- Simulated Terminal Log Feed -->
+            <div class="space-y-4">
+              <div class="flex items-center justify-between">
+                <h3 class="text-sm font-mono font-bold text-text-muted uppercase tracking-widest flex items-center gap-2">
+                  <i data-lucide="terminal" class="w-4 h-4 text-accent-red"></i> Command Console
+                </h3>
+                <button class="text-[10px] font-mono text-text-muted hover:text-accent-red" onclick="document.getElementById('terminal-feed').innerHTML = ''; app.logTerminal('Terminal cleared.', 'info');">CLEAR</button>
+              </div>
+
+              <!-- Terminal Window Box -->
+              <div class="cyber-card p-0 overflow-hidden border-opacity-20 border-accent-red">
+                <!-- Title Bar -->
+                <div class="bg-cyber-dark px-3 py-1.5 border-b border-white border-opacity-5 flex items-center justify-between">
+                  <div class="flex gap-1.5">
+                    <span class="w-2 h-2 rounded-full bg-accent-red inline-block"></span>
+                    <span class="w-2 h-2 rounded-full bg-accent-orange inline-block"></span>
+                    <span class="w-2 h-2 rounded-full bg-accent-lime inline-block"></span>
+                  </div>
+                  <span class="text-[9px] font-mono text-text-muted uppercase tracking-wider">tty1 - node@cyberdeep</span>
+                </div>
+                <!-- Console Contents -->
+                <div id="terminal-feed" class="h-48 overflow-y-auto p-2 font-mono text-[11px] leading-relaxed bg-black bg-opacity-90 scroll-smooth">
+                  <!-- Populated by logTerminal() calls -->
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+      </section>
+
+      <!-- View 2: Active Tool Screen (SPA Viewport) -->
+      <section id="tool-screen" class="hidden space-y-6">
+        <!-- Back Banner Navigation -->
+        <div class="flex items-center justify-between">
+          <button id="close-tool-btn" class="cyber-btn-secondary text-xs py-2 px-4">
+            <i data-lucide="arrow-left" class="w-4 h-4"></i> BACK TO OVERVIEW
+          </button>
+          
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-mono text-text-muted uppercase">Current Container:</span>
+            <span id="active-tool-category" class="cyber-badge cyber-badge-blue">Category</span>
+          </div>
+        </div>
+
+        <!-- Tool Wrapper Shell Container -->
+        <div class="cyber-card cyber-card-glow p-6 md:p-8 space-y-6">
+          <!-- Shell Header -->
+          <div class="flex items-center gap-4 border-b border-white border-opacity-5 pb-6">
+            <div class="p-3 bg-white bg-opacity-5 rounded-lg border border-white border-opacity-10 text-accent-lime">
+              <i id="active-tool-icon" data-lucide="cpu" class="w-8 h-8"></i>
+            </div>
+            <div>
+              <h2 id="active-tool-title" class="type-page-title font-bold font-mono text-white">Tool Name</h2>
+              <div class="flex gap-2 items-center mt-1">
+                <span class="inline-block w-2.5 h-2.5 rounded-full bg-accent-lime animate-pulse"></span>
+                <span class="text-xs font-mono text-accent-lime">SANDBOX CONTAINER SECURED</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tool Inner Custom Content Panel Injection -->
+          <div id="active-tool-content" class="min-h-[300px]">
+            <!-- Injected code logic -->
+          </div>
+        </div>
+      </section>
+
+    </div>
+
+    <!-- Global App Status Footer -->
+    <footer class="h-10 border-t border-white border-opacity-5 bg-cyber-dark bg-opacity-90 flex items-center justify-between px-6 text-[10px] font-mono text-text-muted">
+      <div>CYBERDEEP CORE PROTOCOL &copy; 2026</div>
+      <div class="flex items-center gap-3">
+        <span>SECURITY ENFORCED</span>
+        <span class="inline-block w-2 h-2 rounded-full bg-accent-lime"></span>
+      </div>
+    </footer>
+  </main>
+
+  <!-- Global Modal: API Credentials Overlay Setup -->
+  <div id="api-modal" class="fixed inset-0 z-50 bg-black bg-opacity-80 backdrop-blur-md hidden items-center justify-center p-4">
+    <div class="cyber-card p-6 max-w-lg w-full border border-accent-blue bg-cyber-dark bg-opacity-95 shadow-2xl relative">
+      <button id="close-api-modal" class="absolute top-4 right-4 text-text-muted hover:text-white transition-colors">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+
+      <h3 class="type-card-title font-bold font-mono text-accent-blue mb-4 flex items-center gap-2">
+        <i data-lucide="key" class="w-5 h-5"></i> API CREDENTIAL GATEWAY
+      </h3>
+      <p class="text-xs text-text-secondary mb-6 leading-relaxed">
+        Supply valid API configuration credentials to integrate with external digital intelligence databases. Saved parameters persist locally in your browser's encrypted context.
+      </p>
+
+      <form id="api-form" class="space-y-4">
+        <div class="flex flex-col gap-1.5">
+          <label class="text-[10px] font-mono uppercase text-text-muted">VirusTotal API Key</label>
+          <input type="password" id="vt-key" placeholder="vt_api_key_sha256..." class="cyber-input">
+        </div>
+        <div class="flex flex-col gap-1.5">
+          <label class="text-[10px] font-mono uppercase text-text-muted">Shodan API Key</label>
+          <input type="password" id="shodan-key" placeholder="shodan_node_token..." class="cyber-input">
+        </div>
+        <div class="flex flex-col gap-1.5">
+          <label class="text-[10px] font-mono uppercase text-text-muted">NCRP Portal Credentials</label>
+          <input type="password" id="ncrp-key" placeholder="ncrp_session_token..." class="cyber-input">
+        </div>
+        <div class="flex flex-col gap-1.5">
+          <label class="text-[10px] font-mono uppercase text-text-muted">FBI OSINT Gateway Access</label>
+          <input type="password" id="fbi-key" placeholder="fbi_agency_auth_token..." class="cyber-input">
+        </div>
+
+        <div class="flex gap-3 pt-4 justify-end">
+          <button type="button" onclick="document.getElementById('api-modal').classList.add('hidden')" class="cyber-btn-secondary py-2 text-xs">CANCEL</button>
+          <button type="submit" class="cyber-btn py-2 text-xs bg-accent-blue border-accent-blue hover:text-accent-blue">SAVE PARAMETERS</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- App Main Core Script -->
+  <script src="sms_company_data.js"></script>
+  <script src="ip_data.js"></script>
+  <script src="mcc_data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

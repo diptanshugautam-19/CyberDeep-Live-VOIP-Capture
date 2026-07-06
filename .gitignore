@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+env.bak/
+venv.bak/
+
+# Environment variables
+.env
+.env.local
+
+# Databases & Data Files
+data/
+*.sqlite3
+*.sqlite3.old
+*.sqlite
+*.db
+*.csv
+*.xlsx
+*.json
+
+# Exclude specific static JSON if it's too large, but wait, maybe keep some small ones if they are code.
+# The user has data/ and we definitely don't want the 2.5 GB of databases.
+!data/README.txt
+!data/schema.sql
+
+# Node / JS
+node_modules/
+dist/
+.vite/
+.eslintcache
+*.log
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

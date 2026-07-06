@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>India Police Station Finder</title>
+  <meta name="description" content="Search, filter, locate and export India police station data." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">
+        <svg viewBox="0 0 64 64"><path d="M32 4 54 12v17c0 15-9.5 26-22 31C19.5 55 10 44 10 29V12L32 4Z"/><path d="M23 30h18M32 21v18"/></svg>
+      </div>
+      <div>
+        <h1>India Police Station Finder</h1>
+        <p>Official/open-source police station search portal</p>
+      </div>
+    </div>
+    <nav class="top-actions">
+      <button id="themeBtn" class="btn ghost" type="button">Dark Mode</button>
+      <button id="printBtn" class="btn ghost" type="button">Print</button>
+      <a class="btn primary" href="#dataTools">Load Data</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="hero-copy">
+        <span class="eyebrow">Nationwide Directory</span>
+        <h2>Find police stations by state, district, name, phone, or nearest location.</h2>
+        <p>Upload your generated <code>police_stations_master.csv</code>, or serve this website with a CSV in <code>data/police_stations_master.csv</code>.</p>
+        <div class="hero-search" role="search">
+          <input id="globalSearch" type="search" placeholder="Search police station, district, address, phone..." autocomplete="off" />
+          <button id="searchBtn" class="btn primary" type="button">Search</button>
+          <button id="googleSearchBtn" class="btn ghost" type="button">Search on Google Maps</button>
+        </div>
+        <div class="hero-badges">
+          <span>CSV/XLSX pipeline ready</span>
+          <span>Nearby finder</span>
+          <span>Offline-friendly map</span>
+        </div>
+      </div>
+      <div class="stats-grid" aria-label="Data statistics">
+        <article><strong id="statTotal">0</strong><span>Total stations</span></article>
+        <article><strong id="statStates">0</strong><span>States/UTs</span></article>
+        <article><strong id="statCoords">0%</strong><span>With coordinates</span></article>
+      </div>
+    </section>
+
+    <section id="dataTools" class="panel data-panel">
+      <div>
+        <h3>Raw Data</h3>
+        <p>Upload your local <code>police_stations_master.csv</code> dataset to parse and map records.</p>
+      </div>
+      <div class="data-actions">
+        <label class="file-drop">
+          <input id="csvFile" type="file" accept=".csv,text/csv" />
+          <span>Upload police_stations_master.csv</span>
+        </label>
+      </div>
+      <p id="dataStatus" class="status">Waiting for data...</p>
+    </section>
+
+    <section class="layout">
+      <aside class="filters panel">
+        <h3>Parameters</h3>
+        <label>State / UT
+          <select id="stateFilter"><option value="">All States</option></select>
+        </label>
+        <label>District
+          <select id="districtFilter"><option value="">All Districts</option></select>
+        </label>
+        <label>Coordinate status
+          <select id="coordFilter">
+            <option value="">All records</option>
+            <option value="with">With coordinates</option>
+            <option value="missing">Missing coordinates</option>
+          </select>
+        </label>
+        <label>Sort by
+          <select id="sortBy">
+            <option value="police_station">Police Station</option>
+            <option value="state">State</option>
+            <option value="district">District</option>
+          </select>
+        </label>
+        <div class="filter-actions">
+          <button id="resetBtn" class="btn ghost" type="button">Reset</button>
+          <button id="searchLocallyBtn" class="btn primary" type="button">Search Locally</button>
+        </div>
+
+        <hr />
+        <h3>Nearest Station</h3>
+        <p class="muted">Uses records with latitude/longitude.</p>
+        <button id="nearMeBtn" class="btn primary wide" type="button">Find Near Me</button>
+        <div class="manual-location">
+          <input id="manualLat" placeholder="Latitude" inputmode="decimal" />
+          <input id="manualLon" placeholder="Longitude" inputmode="decimal" />
+          <button id="manualNearBtn" class="btn ghost wide" type="button">Use Coordinates</button>
+        </div>
+        <div id="nearestResult" class="nearest-result"></div>
+      </aside>
+
+      <section class="content">
+        <div class="map-card panel">
+          <div class="section-head">
+            <div>
+              <h3>Map View</h3>
+              <p>Offline coordinate plot for loaded police stations.</p>
+            </div>
+            <span id="visibleCount" class="pill">0 visible</span>
+          </div>
+          <canvas id="mapCanvas" width="1100" height="620" aria-label="India police station map"></canvas>
+          <p class="map-note">Tip: click a point on the map to preview station details.</p>
+        </div>
+
+        <div class="panel table-card">
+          <div class="section-head">
+            <div>
+              <h3>Police Stations</h3>
+              <p>Search results with contact and source details.</p>
+            </div>
+            <div class="pager">
+              <button id="prevPage" class="btn ghost small" type="button">Prev</button>
+              <span id="pageInfo">Page 1</span>
+              <button id="nextPage" class="btn ghost small" type="button">Next</button>
+            </div>
+          </div>
+          <div id="cards" class="cards"></div>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <dialog id="detailDialog">
+    <button id="closeDialog" class="dialog-close" aria-label="Close">×</button>
+    <div id="detailContent"></div>
+  </dialog>
+
+  <footer>
+    <p>Built for public safety data exploration. Verify emergency information with official sources.</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

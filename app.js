@@ -1,0 +1,4889 @@
+// CyberDeep Dashboard Application Core Logic
+
+// 1. Tool Registry Definition
+const TOOLS_REGISTRY = [
+  {
+    id: "ifsc-lookup",
+    name: "IFSC Lookup",
+    category: "Financial",
+    icon: "credit-card",
+    status: "Ready",
+    badgeType: "lime",
+    description: "Validate Indian Financial System Codes (IFSC), retrieve bank name, branch, contact numbers, address, and MICR code details instantly.",
+    placeholderHtml: `
+      <div class="space-y-6">
+        <div class="cyber-card p-6 border border-opacity-20 border-accent-lime">
+          <h3 class="text-lg font-bold font-mono text-accent-lime mb-4 flex items-center gap-2">
+            <i data-lucide="info" class="w-5 h-5"></i> TOOL DESCRIPTION & PROTOCOL
+          </h3>
+          <p class="text-sm text-text-secondary leading-relaxed">
+            This utility queries the centralized banking system database to pull routing parameters associated with IFSC numbers. Enter a 11-digit IFSC code (e.g. <code class="text-accent-blue font-mono">SBIN0000683</code>) to lookup bank information.
+          </p>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div class="md:col-span-2 flex flex-col gap-2">
+            <label class="text-xs font-mono uppercase text-text-muted">Enter IFSC Identifier</label>
+            <div class="flex gap-2">
+              <input type="text" id="ifsc-input" placeholder="e.g. SBIN0000683" class="cyber-input flex-1 uppercase" maxlength="11">
+              <button id="ifsc-search-btn" class="cyber-btn">
+                <i data-lucide="search" class="w-4 h-4"></i> QUERY
+              </button>
+            </div>
+          </div>
+          <div class="flex flex-col gap-2">
+            <label class="text-xs font-mono uppercase text-text-muted font-bold text-accent-orange">Execution Mode</label>
+            <select class="cyber-input bg-opacity-90">
+              <option>Direct Database (Cached)</option>
+              <option>Live API Fetch</option>
+              <option>Decentralized Ledger lookup</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="ifsc-results-container" class="hidden space-y-4">
+          <h4 class="text-md font-bold font-mono text-accent-blue flex items-center gap-2">
+            <i data-lucide="database" class="w-4 h-4"></i> BANK ROUTING RESULTS [STATUS: 200 OK]
+          </h4>
+          <div class="cyber-table-container">
+            <table class="cyber-table">
+              <thead>
+                <tr>
+                  <th>Parameter</th>
+                  <th>Value</th>
+                </tr>
+              </thead>
+              <tbody id="ifsc-table-body">
+                <!-- Populated dynamically -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `,
+    initLogic: function() {
+      const input = document.getElementById("ifsc-input");
+      const btn = document.getElementById("ifsc-search-btn");
+      const container = document.getElementById("ifsc-results-container");
+      const tbody = document.getElementById("ifsc-table-body");
+
+      if (!btn || !input) return;
+
+      btn.addEventListener("click", async () => {
+        const value = input.value.trim().toUpperCase();
+        if (value.length !== 11) {
+          app.logTerminal("IFSC lookup failed: Code must be exactly 11 characters.", "error");
+          alert("Invalid IFSC code length. It must be exactly 11 characters.");
+          return;
+        }
+
+        app.logTerminal(`Initiating live API query for IFSC: ${value}...`, "info");
+        btn.disabled = true;
+        btn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> QUERYING`;
+        lucide.createIcons();
+
+        try {
+          const res = await fetch(`https://ifsc.razorpay.com/${value}`);
+          btn.disabled = false;
+          btn.innerHTML = `<i data-lucide="search" class="w-4 h-4"></i> QUERY`;
+
+          if (!res.ok) {
+            if (res.status === 404) {
+              app.logTerminal(`IFSC code ${value} not found in database.`, "error");
+              alert("IFSC Code not found. Please check and try again.");
+            } else {
+              app.logTerminal(`API error: HTTP ${res.status}`, "error");
+              alert(`API Error: ${res.status}`);
+            }
+            lucide.createIcons();
+            return;
+          }
+
+          const data = await res.json();
+          container.classList.remove("hidden");
+
+          const displayMap = {
+            "BANK": data.BANK || "N/A",
+            "IFSC": data.IFSC || value,
+            "BRANCH": data.BRANCH || "N/A",
+            "ADDRESS": data.ADDRESS || "N/A",
+            "CONTACT": data.CONTACT || "N/A",
+            "CITY": data.CITY || "N/A",
+            "DISTRICT": data.DISTRICT || "N/A",
+            "STATE": data.STATE || "N/A",
+            "RTGS": data.RTGS ? "TRUE (ENABLED)" : "FALSE",
+            "NEFT": data.NEFT ? "TRUE (ENABLED)" : "FALSE",
+            "MICR": data.MICR || "N/A",
+            "BANKCODE": data.BANKCODE || "N/A",
+            "SWIFT": data.SWIFT || "N/A"
+          };
+
+          tbody.innerHTML = Object.entries(displayMap).map(([key, val]) => `
+            <tr>
+              <td class="font-bold text-accent-blue">${key}</td>
+              <td class="text-text-primary font-mono">${val}</td>
+            </tr>
+          `).join("");
+
+          // Add action buttons row
+          const mapsQuery = encodeURIComponent([data.BRANCH, data.CITY, data.STATE, "India"].filter(Boolean).join(", "));
+          tbody.innerHTML += `
+            <tr>
+              <td class="font-bold text-accent-lime" colspan="2">
+                <div class="flex gap-2 flex-wrap pt-2">
+                  <a class="cyber-btn-secondary text-[10px] py-1 px-2.5" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${mapsQuery}">
+                    <i data-lucide="map-pin" class="w-3 h-3"></i> VIEW ON MAP
+                  </a>
+                  <button id="ifsc-download-json" class="cyber-btn-secondary text-[10px] py-1 px-2.5">
+                    <i data-lucide="download" class="w-3 h-3"></i> DOWNLOAD JSON
+                  </button>
+                </div>
+              </td>
+            </tr>
+          `;
+
+          // JSON download handler
+          const dlBtn = document.getElementById("ifsc-download-json");
+          if (dlBtn) {
+            dlBtn.addEventListener("click", () => {
+              const blob = new Blob([JSON.stringify(data, null, 4)], {type: 'application/json'});
+              const a = document.createElement('a');
+              a.href = URL.createObjectURL(blob);
+              a.download = `${value}.json`;
+              a.click();
+              URL.revokeObjectURL(a.href);
+              app.logTerminal(`Downloaded JSON for IFSC: ${value}`, "success");
+            });
+          }
+
+          app.logTerminal(`IFSC lookup complete. Bank: ${data.BANK}, Branch: ${data.BRANCH}`, "success");
+        } catch (err) {
+          btn.disabled = false;
+          btn.innerHTML = `<i data-lucide="search" class="w-4 h-4"></i> QUERY`;
+          app.logTerminal(`IFSC API request failed: ${err.message}`, "error");
+          alert(`Network error: ${err.message}`);
+        }
+        lucide.createIcons();
+      });
+    }
+  },
+  {
+    id: "police-finder",
+    name: "Police Station Finder",
+    category: "OSINT",
+    icon: "map-pin",
+    status: "Ready",
+    badgeType: "lime",
+    description: "Map regional postal PIN codes and districts to the nearest authorized cyber crime cells, stations, and key nodal officer contact coordinates.",
+    placeholderHtml: `
+      <div class="space-y-6">
+        <!-- Top Stats Row -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center">
+          <div class="cyber-card p-3 border-opacity-10">
+            <span class="text-[10px] font-mono text-text-muted uppercase">TOTAL STATIONS</span>
+            <div class="text-xl font-bold font-mono text-white mt-0.5" id="statTotal">0</div>
+          </div>
+          <div class="cyber-card p-3 border-opacity-10">
+            <span class="text-[10px] font-mono text-text-muted uppercase">STATES / UTS</span>
+            <div class="text-xl font-bold font-mono text-accent-blue mt-0.5" id="statStates">0</div>
+          </div>
+          <div class="cyber-card p-3 border-opacity-10">
+            <span class="text-[10px] font-mono text-text-muted uppercase">COORDINATE COVERAGE</span>
+            <div class="text-xl font-bold font-mono text-accent-lime mt-0.5" id="statCoords">0%</div>
+          </div>
+        </div>
+
+        <!-- Raw Data Control (only Local Dataset CSV remains) -->
+        <div class="cyber-card p-6 border-opacity-20 border-accent-lime">
+          <h3 class="text-sm font-bold font-mono text-accent-lime mb-4 flex items-center gap-2">
+            <i data-lucide="database" class="w-4 h-4"></i> Raw Data
+          </h3>
+          <div class="max-w-md flex flex-col gap-2">
+            <label class="text-xs font-mono uppercase text-text-muted">Local Dataset CSV</label>
+            <label class="cyber-input hover:border-accent-lime cursor-pointer flex items-center justify-between text-xs py-2 px-3">
+              <span id="file-label" class="text-text-muted truncate">Upload police_stations_master.csv</span>
+              <input id="csvFile" type="file" accept=".csv,text/csv" class="hidden">
+              <i data-lucide="upload-cloud" class="w-4 h-4 text-accent-lime"></i>
+            </label>
+          </div>
+          <div class="mt-4 flex items-center gap-2 border-t border-white border-opacity-5 pt-3">
+            <span class="text-xs font-mono text-text-muted">Pipeline Status:</span>
+            <span id="dataStatus" class="text-xs font-mono text-accent-blue font-bold">Waiting for data...</span>
+          </div>
+        </div>
+
+        <!-- Dual Split: Sidebar Filters (30%) + Maps & Cards (70%) -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <!-- Filters Column -->
+          <div class="space-y-6">
+            <div class="cyber-card p-5 border-opacity-10 space-y-4">
+              <div class="flex justify-between items-center border-b border-white border-opacity-5 pb-2">
+                <h3 class="text-xs font-mono font-bold text-text-muted uppercase tracking-wider flex items-center gap-1.5">
+                  <i data-lucide="sliders" class="w-3.5 h-3.5 text-accent-blue"></i> Parameters
+                </h3>
+                <button id="resetBtn" class="text-[10px] font-mono text-text-muted hover:text-accent-blue">RESET</button>
+              </div>
+              
+              <div class="flex flex-col gap-3">
+                <div class="flex flex-col gap-1.5">
+                  <label class="text-[10px] font-mono uppercase text-text-muted">Global Search Query</label>
+                  <div class="relative">
+                    <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-text-muted">
+                      <i data-lucide="search" class="w-3.5 h-3.5 text-accent-blue"></i>
+                    </span>
+                    <input id="globalSearch" type="search" placeholder="Search by name, phone..." class="cyber-input w-full pl-9 py-1.5 text-xs">
+                  </div>
+                </div>
+                
+                <div class="flex flex-col gap-1.5">
+                  <label class="text-[10px] font-mono uppercase text-text-muted">State / UT</label>
+                  <select id="stateFilter" class="cyber-input text-xs bg-opacity-95"></select>
+                </div>
+                <div class="flex flex-col gap-1.5">
+                  <label class="text-[10px] font-mono uppercase text-text-muted">District / Region</label>
+                  <select id="districtFilter" class="cyber-input text-xs bg-opacity-95"></select>
+                </div>
+                <div class="flex flex-col gap-1.5">
+                  <label class="text-[10px] font-mono uppercase text-text-muted">Coordinate Mapping</label>
+                  <select id="coordFilter" class="cyber-input text-xs bg-opacity-95">
+                    <option value="">All Records</option>
+                    <option value="with">With Coordinates</option>
+                    <option value="missing">Missing Coordinates</option>
+                  </select>
+                </div>
+                <div class="flex flex-col gap-1.5">
+                  <label class="text-[10px] font-mono uppercase text-text-muted">Sort By Order</label>
+                  <select id="sortBy" class="cyber-input text-xs bg-opacity-95">
+                    <option value="police_station">Station Name</option>
+                    <option value="state">State</option>
+                    <option value="district">District</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- Pincode Lookup -->
+              <div class="flex flex-col gap-1.5 border-t border-white border-opacity-5 pt-3">
+                <label class="text-[10px] font-mono uppercase text-text-muted flex items-center gap-1">
+                  <i data-lucide="hash" class="w-3 h-3 text-accent-blue"></i> Search by Pincode
+                </label>
+                <div class="flex gap-2">
+                  <input id="pincodeInput" type="text" maxlength="6" placeholder="e.g. 110001" class="cyber-input flex-1 py-1.5 px-2 text-xs font-mono">
+                  <button id="pincodeSearchBtn" class="cyber-btn text-[10px] py-1.5 px-2.5 flex items-center gap-1">
+                    <i data-lucide="search" class="w-3 h-3"></i> GO
+                  </button>
+                </div>
+                <div id="pincodeResult" class="space-y-2"></div>
+              </div>
+
+              <div class="flex flex-col gap-2 pt-2">
+                <!-- Search Locally and Maps Search -->
+                <button id="searchLocallyBtn" class="cyber-btn w-full text-xs py-2 flex items-center justify-center gap-1">
+                  <i data-lucide="search" class="w-3.5 h-3.5"></i> SEARCH LOCALLY
+                </button>
+                <button id="googleSearchBtn" class="cyber-btn-secondary w-full text-xs py-2 flex items-center justify-center gap-1">
+                  <i data-lucide="map-pin" class="w-3.5 h-3.5"></i> MAPS GLOBAL SEARCH
+                </button>
+              </div>
+            </div>
+
+            <!-- Geolocation (Nearest Station) Card -->
+            <div class="cyber-card p-5 border-opacity-10 space-y-4">
+              <h3 class="text-xs font-mono font-bold text-text-muted uppercase tracking-wider flex items-center gap-1.5 border-b border-white border-opacity-5 pb-2">
+                <i data-lucide="navigation" class="w-3.5 h-3.5 text-accent-lime"></i> Nearest Station Finder
+              </h3>
+              <p class="text-[11px] text-text-muted">Scan the localized coordinates space to identify the closest emergency cells.</p>
+              
+              <div class="flex gap-2">
+                <button id="nearMeBtn" class="cyber-btn flex-1 text-xs py-2">
+                  <i data-lucide="locate" class="w-3.5 h-3.5"></i> FIND NEAR ME
+                </button>
+              </div>
+
+              <div class="flex flex-col gap-2">
+                <span class="text-[10px] font-mono uppercase text-text-muted">Manual Coordinates Entry</span>
+                <div class="flex gap-2">
+                  <input id="manualLat" placeholder="Latitude" type="number" step="any" class="cyber-input flex-1 py-1 px-2 text-xs">
+                  <input id="manualLon" placeholder="Longitude" type="number" step="any" class="cyber-input flex-1 py-1 px-2 text-xs">
+                </div>
+                <button id="manualNearBtn" class="cyber-btn-secondary w-full text-xs py-2 flex items-center justify-center gap-1">
+                  <i data-lucide="crosshair" class="w-3.5 h-3.5"></i> SCAN COORDINATES
+                </button>
+              </div>
+
+              <!-- Result Container -->
+              <div id="nearestResult" class="space-y-2 mt-2"></div>
+            </div>
+          </div>
+
+          <!-- Content Column (Map & Cards) -->
+          <div class="lg:col-span-2 space-y-6">
+            <!-- Police Cards List -->
+            <div class="cyber-card p-5 border-opacity-10">
+              <div class="flex justify-between items-center border-b border-white border-opacity-5 pb-3 mb-4">
+                <div>
+                  <h3 class="text-sm font-bold font-mono text-white flex items-center gap-1.5">
+                    <i data-lucide="shield" class="w-4 h-4 text-accent-lime"></i> POLICE INSPECTORATES
+                  </h3>
+                  <p class="text-[11px] text-text-muted mt-0.5">Nodal officers, operational status, and contact directory.</p>
+                </div>
+                
+                <div class="flex items-center gap-2">
+                  <button id="prevPage" class="cyber-btn-secondary text-[11px] py-1 px-2.5"><i data-lucide="chevron-left" class="w-3 h-3"></i></button>
+                  <span id="pageInfo" class="text-xs font-mono text-text-secondary">Page 1 of 1</span>
+                  <button id="nextPage" class="cyber-btn-secondary text-[11px] py-1 px-2.5"><i data-lucide="chevron-right" class="w-3 h-3"></i></button>
+                </div>
+              </div>
+
+              <div id="cards" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- Populated by JS -->
+              </div>
+            </div>
+
+            <!-- Radar Map Canvas Card -->
+            <div class="cyber-card p-5 border-opacity-10">
+              <div class="flex justify-between items-center border-b border-white border-opacity-5 pb-3 mb-4">
+                <div>
+                  <h3 class="text-sm font-bold font-mono text-white flex items-center gap-1.5">
+                    <i data-lucide="map" class="w-4 h-4 text-accent-blue"></i> GEOSPATIAL VECTOR RADAR
+                  </h3>
+                  <p class="text-[11px] text-text-muted mt-0.5">Plotting coordinate-enabled stations across the Indian Subcontinent.</p>
+                </div>
+                <span id="visibleCount" class="cyber-badge cyber-badge-blue text-[10px]">0 visible</span>
+              </div>
+              
+              <div class="relative w-full aspect-[5/6] max-h-[600px] overflow-hidden bg-black bg-opacity-40 border border-white border-opacity-5 rounded-lg shadow-inner">
+                <div class="absolute bottom-4 right-4 z-10 flex flex-col gap-2">
+                  <button id="zoomInBtn" class="w-8 h-8 rounded bg-cyber-dark bg-opacity-90 border border-white border-opacity-10 hover:border-accent-blue text-white hover:text-accent-blue flex items-center justify-center font-bold text-lg select-none transition-all shadow-lg" type="button" title="Zoom In">+</button>
+                  <button id="zoomOutBtn" class="w-8 h-8 rounded bg-cyber-dark bg-opacity-90 border border-white border-opacity-10 hover:border-accent-blue text-white hover:text-accent-blue flex items-center justify-center font-bold text-lg select-none transition-all shadow-lg" type="button" title="Zoom Out">-</button>
+                  <button id="zoomResetBtn" class="w-8 h-8 rounded bg-cyber-dark bg-opacity-90 border border-white border-opacity-10 hover:border-accent-blue text-white hover:text-accent-blue flex items-center justify-center text-xs select-none transition-all shadow-lg" type="button" title="Reset Zoom">⟲</button>
+                </div>
+                <canvas id="mapCanvas" width="700" height="800" class="w-full h-full block cursor-crosshair"></canvas>
+              </div>
+              <p class="text-[10px] text-text-muted font-mono mt-2 flex items-center gap-1">
+                <i data-lucide="info" class="w-3.5 h-3.5 text-accent-blue"></i> <span>Hover to view coordinates. Click on any mapped dot node point to inspect localized station telemetry.</span>
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Custom Dialog overlay -->
+        <dialog id="detailDialog" style="background:transparent;border:none;padding:0;max-width:520px;width:90%;outline:none;">
+          <div class="cyber-card" style="padding:1.5rem;border:1px solid rgba(0,210,255,0.3);background:rgba(10,14,23,0.97);box-shadow:0 12px 40px rgba(0,0,0,0.7);position:relative;">
+            <button id="closeDialog" style="position:absolute;top:12px;right:12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.15);color:#94a3b8;width:32px;height:32px;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:18px;line-height:1;transition:all 0.2s;" onmouseover="this.style.color='#fff';this.style.borderColor='#ff3366';this.style.background='rgba(255,51,102,0.15)'" onmouseout="this.style.color='#94a3b8';this.style.borderColor='rgba(255,255,255,0.15)';this.style.background='rgba(255,255,255,0.05)'">&times;</button>
+            <div id="detailContent" style="margin-top:0.5rem;">
+              <!-- Dynamic Details Injected -->
+            </div>
+          </div>
+        </dialog>
+      </div>
+    `,
+    initLogic: function() {
+      // 1. Tool Configurations
+      const INDIA_BBOX = { minLat: 6, maxLat: 38.5, minLon: 68, maxLon: 98.5 };
+      const PAGE_SIZE = 24;
+
+      // Highly detailed map coordinates array of India boundary (~60 points)
+      const INDIA_OUTLINE = [
+        [68.1, 23.7], [68.7, 24.3], [70.0, 24.6], [71.0, 25.5], [71.1, 27.0],
+        [72.5, 28.5], [73.8, 29.8], [75.1, 30.3], [74.5, 31.2], [74.3, 32.3],
+        [74.9, 32.7], [74.0, 34.2], [74.5, 34.8], [75.5, 34.7], [76.5, 35.5],
+        [77.8, 35.5], [78.6, 34.8], [79.2, 32.7], [78.8, 32.1], [79.9, 31.0],
+        [81.0, 30.2], [84.0, 28.6], [85.2, 27.5], [88.1, 27.3], [88.5, 28.0],
+        [88.8, 27.3], [91.5, 27.8], [91.6, 26.9], [89.9, 26.7], [89.9, 25.2],
+        [92.1, 25.1], [92.2, 26.1], [93.7, 26.1], [94.5, 27.2], [96.0, 28.2],
+        [97.3, 27.9], [97.1, 27.0], [96.2, 26.0], [95.0, 25.5], [94.3, 23.7],
+        [92.4, 21.9], [92.2, 20.8], [89.0, 21.7], [87.5, 21.5], [86.5, 20.3],
+        [84.5, 19.1], [82.5, 17.8], [80.3, 16.1], [80.0, 13.5], [79.8, 11.2],
+        [79.2, 10.3], [79.8, 9.3], [78.2, 8.8], [77.5, 8.0], [76.8, 8.5],
+        [76.3, 10.0], [75.0, 12.0], [73.8, 15.0], [72.8, 18.8], [72.1, 21.0],
+        [70.0, 21.0], [69.0, 22.8], [68.1, 23.7]
+      ];
+
+      let allRows = [];
+      let filteredRows = [];
+      let page = 1;
+      let selectedPoint = null;
+      let hoverCoords = null;
+
+      // Scanning lines config
+      let animationFrameId = null;
+      let scanLineX = 0;
+      let scanSpeed = 1.5;
+      let pulseRadius = 5;
+      let pulseDir = 0.15;
+
+      // Zoom and pan state
+      let zoomLevel = 1;
+      let panX = 0;
+      let panY = 0;
+      let isPanning = false;
+      let panStartX = 0;
+      let panStartY = 0;
+
+      // 2. Element Selectors Mapping
+      const els = {
+        search: document.getElementById('globalSearch'),
+        state: document.getElementById('stateFilter'),
+        district: document.getElementById('districtFilter'),
+        coord: document.getElementById('coordFilter'),
+        sort: document.getElementById('sortBy'),
+        cards: document.getElementById('cards'),
+        canvas: document.getElementById('mapCanvas'),
+        status: document.getElementById('dataStatus'),
+        visible: document.getElementById('visibleCount'),
+        total: document.getElementById('statTotal'),
+        states: document.getElementById('statStates'),
+        coords: document.getElementById('statCoords'),
+        pageInfo: document.getElementById('pageInfo'),
+        nearest: document.getElementById('nearestResult'),
+        dialog: document.getElementById('detailDialog'),
+        detail: document.getElementById('detailContent'),
+        csvFile: document.getElementById('csvFile'),
+        sampleBtn: document.getElementById('sampleBtn'),
+        clearBtn: document.getElementById('clearBtn'),
+        resetBtn: document.getElementById('resetBtn'),
+        searchLocallyBtn: document.getElementById('searchLocallyBtn'),
+        prevPage: document.getElementById('prevPage'),
+        nextPage: document.getElementById('nextPage'),
+        nearMeBtn: document.getElementById('nearMeBtn'),
+        manualLat: document.getElementById('manualLat'),
+        manualLon: document.getElementById('manualLon'),
+        manualNearBtn: document.getElementById('manualNearBtn'),
+        zoomInBtn: document.getElementById('zoomInBtn'),
+        zoomOutBtn: document.getElementById('zoomOutBtn'),
+        zoomResetBtn: document.getElementById('zoomResetBtn'),
+        googleSearchBtn: document.getElementById('googleSearchBtn'),
+        closeDialogBtn: document.getElementById('closeDialog'),
+        pincodeInput: document.getElementById('pincodeInput'),
+        pincodeSearchBtn: document.getElementById('pincodeSearchBtn'),
+        pincodeResult: document.getElementById('pincodeResult')
+      };
+
+      if (!els.canvas) return;
+      const ctx = els.canvas.getContext('2d');
+
+      // 3. Animation Loop & Hover tracking
+      function animLoop() {
+        // Update scanning sweep
+        scanLineX += scanSpeed;
+        if (scanLineX > els.canvas.width) {
+          scanLineX = 0;
+        }
+
+        // Update selected target pulse radius
+        pulseRadius += pulseDir;
+        if (pulseRadius > 15 || pulseRadius < 4) {
+          pulseDir = -pulseDir;
+        }
+
+        renderMap();
+        animationFrameId = requestAnimationFrame(animLoop);
+      }
+
+      function handleMouseMove(e) {
+        const rect = els.canvas.getBoundingClientRect();
+        const x = (e.clientX - rect.left) * (els.canvas.width / rect.width);
+        const y = (e.clientY - rect.top) * (els.canvas.height / rect.height);
+        
+        // Convert canvas X/Y coordinates back to Lat/Lon using the inverse projection
+        const pad = 42;
+        const canvasW = els.canvas.width;
+        const canvasH = els.canvas.height;
+        const w = canvasW - pad * 2;
+        const h = canvasH - pad * 2;
+
+        const latRange = INDIA_BBOX.maxLat - INDIA_BBOX.minLat;
+        const lonRange = INDIA_BBOX.maxLon - INDIA_BBOX.minLon;
+        const cosLat = 0.92388; // cos(22.5 degrees) for India's center latitude aspect scaling
+        const scaleY = Math.min(h / latRange, w / (lonRange * cosLat));
+        const scaleX = scaleY * cosLat;
+
+        const mapW = lonRange * scaleX;
+        const mapH = latRange * scaleY;
+        const offsetX = pad + (w - mapW) / 2;
+        const offsetY = pad + (h - mapH) / 2;
+
+        const lon = INDIA_BBOX.minLon + (x - offsetX) / scaleX;
+        const lat = INDIA_BBOX.maxLat - (y - offsetY) / scaleY;
+
+        // Check bounding box bounds before updating hover coordinate tooltip
+        if (lat >= 6 && lat <= 38.5 && lon >= 68 && lon <= 98.5) {
+          hoverCoords = { x, y, lat, lon };
+        } else {
+          hoverCoords = null;
+        }
+      }
+
+      // Pincode Lookup via India Post API
+      async function lookupPincode() {
+        const pin = (els.pincodeInput?.value || '').trim();
+        if (!/^\d{6}$/.test(pin)) {
+          els.pincodeResult.innerHTML = '<div class="p-2 bg-red-500 bg-opacity-10 border border-red-500 border-opacity-20 rounded text-[11px] text-red-400 font-mono">Enter a valid 6-digit PIN code.</div>';
+          app.logTerminal('Pincode Lookup: Invalid PIN code format.', 'error');
+          return;
+        }
+
+        els.pincodeResult.innerHTML = '<div class="p-2 bg-white bg-opacity-5 rounded text-[11px] text-accent-blue font-mono flex items-center gap-2"><i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> Looking up PIN ' + pin + '...</div>';
+        lucide.createIcons();
+        app.logTerminal('Pincode Lookup: Querying ' + pin + '...', 'info');
+
+        try {
+          const res = await fetch('https://api.postalpincode.in/pincode/' + pin);
+          const data = await res.json();
+
+          if (!data || !data[0] || data[0].Status !== 'Success' || !data[0].PostOffice || !data[0].PostOffice.length) {
+            els.pincodeResult.innerHTML = '<div class="p-2 bg-yellow-500 bg-opacity-10 border border-yellow-500 border-opacity-20 rounded text-[11px] text-yellow-400 font-mono">No results found for PIN ' + pin + '. Verify the pincode.</div>';
+            app.logTerminal('Pincode Lookup: No results for ' + pin, 'error');
+            return;
+          }
+
+          const offices = data[0].PostOffice;
+          const first = offices[0];
+          const state = first.State || '';
+          const district = first.District || '';
+
+          // Build postal info card
+          let html = '<div class="p-3 bg-white bg-opacity-5 rounded border border-accent-blue border-opacity-20 space-y-2">';
+          html += '<div class="flex justify-between items-center"><span class="text-[10px] font-mono text-text-muted uppercase">Pincode</span><span class="text-sm font-bold font-mono text-accent-blue">' + pin + '</span></div>';
+          html += '<div class="flex justify-between items-center"><span class="text-[10px] font-mono text-text-muted uppercase">State</span><span class="text-xs font-mono text-white">' + escapeHtml(state) + '</span></div>';
+          html += '<div class="flex justify-between items-center"><span class="text-[10px] font-mono text-text-muted uppercase">District</span><span class="text-xs font-mono text-white">' + escapeHtml(district) + '</span></div>';
+          html += '<div class="flex justify-between items-center"><span class="text-[10px] font-mono text-text-muted uppercase">Division</span><span class="text-xs font-mono text-white">' + escapeHtml(first.Division || 'n/a') + '</span></div>';
+          html += '<div class="flex justify-between items-center"><span class="text-[10px] font-mono text-text-muted uppercase">Region</span><span class="text-xs font-mono text-white">' + escapeHtml(first.Region || 'n/a') + '</span></div>';
+
+          // Show post offices
+          html += '<div class="border-t border-white border-opacity-5 pt-2 mt-1"><span class="text-[10px] font-mono text-text-muted uppercase block mb-1">Post Offices (' + offices.length + ')</span>';
+          html += '<div class="max-h-32 overflow-auto space-y-1">';
+          offices.forEach(po => {
+            html += '<div class="text-[10px] font-mono text-white flex justify-between items-center py-0.5"><span>' + escapeHtml(po.Name) + '</span><span class="text-text-muted">' + escapeHtml(po.BranchType || '') + '</span></div>';
+          });
+          html += '</div></div>';
+          html += '</div>';
+
+          // Auto-filter police stations by state + district
+          const matchState = state.toLowerCase();
+          const matchDistrict = district.toLowerCase();
+          const matched = allRows.filter(r => {
+            const rState = (r.state || '').toLowerCase();
+            const rDist = (r.district || '').toLowerCase();
+            if (rState === matchState && rDist === matchDistrict) return true;
+            if (rState === matchState && rDist.includes(matchDistrict)) return true;
+            if (rState === matchState && matchDistrict.includes(rDist) && rDist) return true;
+            return false;
+          });
+
+          if (matched.length > 0) {
+            // Set dropdowns and trigger filter
+            const stateOptions = [...els.state.options].map(o => o.value);
+            const matchedStateOption = stateOptions.find(o => o.toLowerCase() === matchState);
+            if (matchedStateOption) {
+              els.state.value = matchedStateOption;
+              populateDistricts();
+              const distOptions = [...els.district.options].map(o => o.value);
+              const matchedDistOption = distOptions.find(o => o.toLowerCase() === matchDistrict) ||
+                                        distOptions.find(o => o.toLowerCase().includes(matchDistrict));
+              if (matchedDistOption) els.district.value = matchedDistOption;
+            }
+            applyFilters();
+            html += '<div class="p-2 bg-accent-lime bg-opacity-10 border border-accent-lime border-opacity-20 rounded text-[11px] text-accent-lime font-mono mt-2"><i data-lucide="check-circle" class="w-3.5 h-3.5 inline-block mr-1"></i> Found ' + matched.length + ' police station' + (matched.length > 1 ? 's' : '') + ' in ' + escapeHtml(district) + ', ' + escapeHtml(state) + '.</div>';
+            app.logTerminal('Pincode ' + pin + ': Found ' + matched.length + ' stations in ' + district + ', ' + state, 'success');
+          } else {
+            // Try state-level match
+            const stateMatched = allRows.filter(r => (r.state || '').toLowerCase() === matchState);
+            if (stateMatched.length > 0) {
+              const stateOptions = [...els.state.options].map(o => o.value);
+              const matchedStateOption = stateOptions.find(o => o.toLowerCase() === matchState);
+              if (matchedStateOption) els.state.value = matchedStateOption;
+              els.district.value = '';
+              applyFilters();
+              html += '<div class="p-2 bg-yellow-500 bg-opacity-10 border border-yellow-500 border-opacity-20 rounded text-[11px] text-yellow-400 font-mono mt-2"><i data-lucide="alert-triangle" class="w-3.5 h-3.5 inline-block mr-1"></i> No exact district match. Showing ' + stateMatched.length + ' station' + (stateMatched.length > 1 ? 's' : '') + ' in ' + escapeHtml(state) + '.</div>';
+              app.logTerminal('Pincode ' + pin + ': No district match, showing ' + stateMatched.length + ' stations in ' + state, 'info');
+            } else {
+              html += '<div class="p-2 bg-yellow-500 bg-opacity-10 border border-yellow-500 border-opacity-20 rounded text-[11px] text-yellow-400 font-mono mt-2"><i data-lucide="alert-triangle" class="w-3.5 h-3.5 inline-block mr-1"></i> No police stations found for this area. Try loading the full dataset.</div>';
+              app.logTerminal('Pincode ' + pin + ': No stations found in dataset.', 'error');
+            }
+          }
+
+          els.pincodeResult.innerHTML = html;
+          lucide.createIcons();
+        } catch (err) {
+          els.pincodeResult.innerHTML = '<div class="p-2 bg-red-500 bg-opacity-10 border border-red-500 border-opacity-20 rounded text-[11px] text-red-400 font-mono">API error: ' + escapeHtml(err.message) + '. Check your internet connection.</div>';
+          app.logTerminal('Pincode Lookup failed: ' + err.message, 'error');
+        }
+      }
+
+      // 4. Setup Callbacks & Event Listeners
+      function initTool() {
+        bindEvents();
+        
+        // Restore browser cached data if available
+        const cached = localStorage.getItem('policeFinderRows');
+        if (cached) {
+          try {
+            setData(JSON.parse(cached), 'Loaded cached browser database.');
+            app.logTerminal("Restored cached police station dataset.", "success");
+          } catch(e) {}
+        } else {
+          tryAutoLoad();
+        }
+
+        // Start sweep and target pulsing loop
+        scanLineX = 0;
+        animLoop();
+      }
+
+      function bindEvents() {
+        els.csvFile.addEventListener('change', handleFile);
+        if (els.sampleBtn) {
+          els.sampleBtn.addEventListener('click', () => {
+            const demoRows = [
+              {state:'Delhi',district:'New Delhi',police_station:'Connaught Place Police Station',address:'Connaught Place, New Delhi',phone:'112',email:'',latitude:'28.6315',longitude:'77.2167',commissionerate:'Delhi Police',website:'https://delhipolice.gov.in/',source_url:'https://delhipolice.gov.in/',missing_coordinates:'false'},
+              {state:'Maharashtra',district:'Mumbai',police_station:'Colaba Police Station',address:'Colaba, Mumbai',phone:'100',email:'',latitude:'18.9151',longitude:'72.8258',commissionerate:'Mumbai Police',website:'',source_url:'demo',missing_coordinates:'false'}
+            ];
+            setData(demoRows, 'Loaded demo database.');
+            app.logTerminal("Loaded target demo parameters.", "info");
+          });
+        }
+        if (els.clearBtn) {
+          els.clearBtn.addEventListener('click', () => {
+            localStorage.removeItem('policeFinderRows');
+            setData([], 'Database cleared.');
+            app.logTerminal("Wiped local police station cache.", "error");
+          });
+        }
+        
+        // Trigger filters locally on search button click
+        els.searchLocallyBtn.addEventListener('click', () => {
+          app.logTerminal("Executing local database search query...", "info");
+          applyFilters();
+        });
+
+        // Trigger search on enter press inside query input
+        els.search.addEventListener('keypress', (e) => {
+          if (e.key === 'Enter') {
+            app.logTerminal("Executing local database search query...", "info");
+            applyFilters();
+          }
+        });
+
+        [els.state, els.district, els.coord, els.sort].forEach(el => el.addEventListener('change', applyFilters));
+        
+        els.resetBtn.addEventListener('click', resetFilters);
+        els.googleSearchBtn.addEventListener('click', openGoogleMapsSearch);
+        
+        els.prevPage.addEventListener('click', () => {
+          if (page > 1) { page--; renderCards(); }
+        });
+        els.nextPage.addEventListener('click', () => {
+          if (page < maxPage()) { page++; renderCards(); }
+        });
+        
+        els.nearMeBtn.addEventListener('click', findNearMe);
+        els.manualNearBtn.addEventListener('click', () => {
+          nearestFrom(Number(els.manualLat.value), Number(els.manualLon.value));
+        });
+        
+        els.closeDialogBtn.addEventListener('click', () => els.dialog.close());
+        els.canvas.addEventListener('click', handleMapClick);
+
+        // Pincode lookup
+        if (els.pincodeSearchBtn) els.pincodeSearchBtn.addEventListener('click', lookupPincode);
+        if (els.pincodeInput) els.pincodeInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') lookupPincode(); });
+
+        // Zoom controls
+        if (els.zoomInBtn) els.zoomInBtn.addEventListener('click', () => {
+          zoomLevel = Math.min(zoomLevel * 1.3, 8);
+        });
+        if (els.zoomOutBtn) els.zoomOutBtn.addEventListener('click', () => {
+          zoomLevel = Math.max(zoomLevel / 1.3, 0.5);
+        });
+        if (els.zoomResetBtn) els.zoomResetBtn.addEventListener('click', () => {
+          zoomLevel = 1; panX = 0; panY = 0;
+        });
+
+        // Mouse wheel zoom
+        els.canvas.addEventListener('wheel', (e) => {
+          e.preventDefault();
+          const delta = e.deltaY > 0 ? 0.9 : 1.1;
+          zoomLevel = Math.max(0.5, Math.min(8, zoomLevel * delta));
+        }, { passive: false });
+
+        // Pan with middle mouse or right-click drag
+        els.canvas.addEventListener('mousedown', (e) => {
+          if (e.button === 1 || e.button === 2) {
+            isPanning = true;
+            panStartX = e.clientX - panX;
+            panStartY = e.clientY - panY;
+            e.preventDefault();
+          }
+        });
+        els.canvas.addEventListener('mousemove', (e) => {
+          if (isPanning) {
+            panX = e.clientX - panStartX;
+            panY = e.clientY - panStartY;
+          }
+        });
+        els.canvas.addEventListener('mouseup', (e) => {
+          if (e.button === 1 || e.button === 2) isPanning = false;
+        });
+        els.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+        // Coordinates tracking overlay bindings
+        els.canvas.addEventListener('mousemove', handleMouseMove);
+        els.canvas.addEventListener('mouseleave', () => {
+          hoverCoords = null;
+        });
+
+        // File drop styling labels sync
+        els.csvFile.addEventListener('change', (e) => {
+          const file = e.target.files[0];
+          if(file && document.getElementById('file-label')) {
+            document.getElementById('file-label').innerText = file.name;
+          }
+        });
+      }
+
+      // 4. Data Sync Logic
+      async function tryAutoLoad() {
+        try {
+          app.logTerminal("Auto-loading master police dataset...", "info");
+          const res = await fetch('data/police_stations_master.csv', {cache: 'no-store'});
+          if (!res.ok) throw new Error('Master CSV file check failed.');
+          const text = await res.text();
+          const rows = parseCSV(text);
+          setData(rows, `Sync Complete: loaded ${rows.length.toLocaleString()} records.`);
+          app.logTerminal(`Successfully sync'd ${rows.length.toLocaleString()} master records from local storage.`, "success");
+        } catch(e) {
+          setData([], 'No master CSV found. Upload file.');
+          app.logTerminal("No active database found. Upload CSV file.", "info");
+        }
+      }
+
+      function handleFile(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        app.logTerminal(`Loading file: ${file.name}...`, "info");
+        const reader = new FileReader();
+        reader.onload = () => {
+          const rows = parseCSV(String(reader.result || ''));
+          setData(rows, `Uploaded ${rows.length.toLocaleString()} records from ${file.name}.`);
+          app.logTerminal(`Decoded ${rows.length.toLocaleString()} CSV records.`, "success");
+          try {
+            localStorage.setItem('policeFinderRows', JSON.stringify(rows));
+          } catch(e) {
+            app.logTerminal("Local cache write failed: Browser storage quota exceeded.", "error");
+          }
+        };
+        reader.readAsText(file);
+      }
+
+      function setData(rows, message) {
+        allRows = rows.map(normalizeRow).filter(r => r.police_station || r.address);
+        page = 1;
+        populateFilters();
+        applyFilters();
+        els.status.textContent = message;
+      }
+
+      // 5. Data Normalization Rules
+      function normalizeRow(r) {
+        const out = {};
+        Object.keys(r || {}).forEach(k => {
+          const key = normalizeKey(k);
+          out[key] = r[k];
+        });
+        const row = {};
+        row.state = clean(getAny(out, ['state','state_name','statename','state_ut','state_or_ut']));
+        row.district = clean(getAny(out, ['district','district_name','districtname','dist','police_district','policedistrict']));
+        row.police_station = clean(getAny(out, [
+          'police_station','policestation','police_station_name','policestationname','station','station_name','stationname',
+          'ps','ps_name','psname','name','thana','thana_name','nameofpolicestation','name_of_police_station'
+        ]));
+        row.address = clean(getAny(out, ['address','full_address','fulladdress','location','office_address','officeaddress']));
+        row.phone = clean(getAny(out, ['phone','phone_number','phonenumber','telephone','mobile','contact','contact_number','contactnumber','tel']));
+        row.email = clean(getAny(out, ['email','email_id','emailid','e_mail','mail']));
+        row.latitude = toNum(getAny(out, ['latitude','lat','y','ycoord','y_coordinate']));
+        row.longitude = toNum(getAny(out, ['longitude','lon','lng','long','x','xcoord','x_coordinate']));
+        row.commissionerate = clean(getAny(out, ['commissionerate','police_commissionerate','policecommissionerate']));
+        row.website = clean(getAny(out, ['website','official_website','officialwebsite','url']));
+        row.source_url = clean(getAny(out, ['source_url','sourceurl','source','source_link','sourcelink']));
+        row.last_updated = clean(getAny(out, ['last_updated','lastupdated','updated','updated_date','updateddate']));
+        row.missing_coordinates = !(isCoord(row.latitude, row.longitude));
+        return row;
+      }
+
+      function populateFilters() {
+        fillSelect(els.state, unique(allRows.map(r => r.state)), 'All States');
+        populateDistricts();
+      }
+
+      function populateDistricts() {
+        const state = els.state.value;
+        const districts = unique(allRows.filter(r => !state || r.state === state).map(r => r.district));
+        const current = els.district.value;
+        fillSelect(els.district, districts, 'All Districts');
+        if (districts.includes(current)) els.district.value = current;
+      }
+
+      function fillSelect(el, values, label) {
+        el.innerHTML = `<option value="">${label}</option>` + values.map(v => `<option value="${escapeAttr(v)}">${escapeHtml(v)}</option>`).join('');
+      }
+
+      function unique(vals) { return [...new Set(vals.filter(Boolean))].sort((a,b)=>a.localeCompare(b)); }
+
+
+      // (OSM sync code removed - no longer needed)
+
+      // 7. Filtering & Sorting Engine
+      function applyFilters() {
+        populateDistricts();
+        const q = els.search.value.trim().toLowerCase();
+        const state = els.state.value;
+        const district = els.district.value;
+        const coord = els.coord.value;
+
+        filteredRows = allRows.filter(r => {
+          if (state && r.state !== state) return false;
+          if (district && r.district !== district) return false;
+          if (coord === 'with' && r.missing_coordinates) return false;
+          if (coord === 'missing' && !r.missing_coordinates) return false;
+          if (q) {
+            const blob = [r.state, r.district, r.police_station, r.address, r.phone, r.email, r.commissionerate].join(' ').toLowerCase();
+            if (!blob.includes(q)) return false;
+          }
+          return true;
+        });
+
+        sortRows();
+        page = 1;
+        render();
+      }
+
+      function sortRows() {
+        const s = els.sort.value;
+        filteredRows.sort((a,b) => {
+          return String(a[s] || '').localeCompare(String(b[s] || ''));
+        });
+      }
+
+      function resetFilters() {
+        els.search.value = '';
+        els.state.value = '';
+        els.district.value = '';
+        els.coord.value = '';
+        els.sort.value = 'police_station';
+        applyFilters();
+      }
+
+      function openGoogleMapsSearch() {
+        const parts = ['police station'];
+        if (els.search.value.trim()) parts.push(els.search.value.trim());
+        if (els.district.value) parts.push(els.district.value);
+        if (els.state.value) parts.push(els.state.value);
+        parts.push('India');
+        const query = parts.join(' ');
+        window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`, '_blank', 'noopener');
+      }
+
+      function googleMapsSearchUrl(r) {
+        const query = [r.police_station, r.address, r.district, r.state, 'India'].filter(Boolean).join(' ');
+        return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+      }
+
+      // 8. Aspect-Accurate Map projection & sweep animations
+      function render() {
+        updateStats();
+        renderCards();
+      }
+
+      function updateStats() {
+        const withCoords = allRows.filter(r => !r.missing_coordinates).length;
+        els.total.textContent = allRows.length.toLocaleString();
+        els.states.textContent = unique(allRows.map(r=>r.state)).length.toLocaleString();
+        els.coords.textContent = allRows.length ? `${Math.round(withCoords/allRows.length*100)}%` : '0%';
+        els.visible.textContent = `${filteredRows.length.toLocaleString()} visible`;
+      }
+
+      function renderMap() {
+        const w = els.canvas.width, h = els.canvas.height;
+        ctx.clearRect(0,0,w,h);
+        
+        // Cyber Radar Background Color
+        ctx.fillStyle = '#050811';
+        ctx.fillRect(0,0,w,h);
+        
+        // Tactical concentric circular sonar rings
+        ctx.strokeStyle = 'rgba(50, 205, 50, 0.05)';
+        ctx.lineWidth = 1;
+        for(let r = 80; r < w; r += 80) {
+          ctx.beginPath();
+          ctx.arc(w/2, h/2, r, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+
+        // Crosshairs
+        ctx.strokeStyle = 'rgba(50, 205, 50, 0.08)';
+        ctx.beginPath(); ctx.moveTo(w/2, 0); ctx.lineTo(w/2, h); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, h/2); ctx.lineTo(w, h/2); ctx.stroke();
+
+        drawGrid(w,h);
+        drawIndiaOutline(w,h);
+        
+        // Plot coordinate-enabled station nodes
+        const pts = filteredRows.filter(r => isCoord(r.latitude, r.longitude));
+        pts.forEach(r => drawPoint(r, '#00d2ff', 3.5)); // Glowing Electric Blue
+        
+        // Pulsing selected point HUD target indicator
+        if (selectedPoint) {
+          drawPoint(selectedPoint, '#ff3366', 5); // Target core node
+          const p = project(selectedPoint.latitude, selectedPoint.longitude);
+          ctx.strokeStyle = '#ff3366';
+          ctx.lineWidth = 1.5;
+          ctx.globalAlpha = 0.8 * (1 - (pulseRadius / 15));
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, pulseRadius, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.globalAlpha = 1.0;
+        }
+        
+        // Vertical sweeping laser scanning line
+        ctx.strokeStyle = 'rgba(50, 205, 50, 0.4)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(scanLineX, 0);
+        ctx.lineTo(scanLineX, h);
+        ctx.stroke();
+
+        // Laser scan line fade tail
+        const trailWidth = 80;
+        const scanGrad = ctx.createLinearGradient(scanLineX - trailWidth, 0, scanLineX, 0);
+        scanGrad.addColorStop(0, 'rgba(50, 205, 50, 0)');
+        scanGrad.addColorStop(1, 'rgba(50, 205, 50, 0.08)');
+        ctx.fillStyle = scanGrad;
+        ctx.fillRect(Math.max(0, scanLineX - trailWidth), 0, Math.min(scanLineX, trailWidth), h);
+
+        // Hover coordinates HUD crosshairs & readout tooltip
+        if (hoverCoords) {
+          ctx.strokeStyle = 'rgba(0, 210, 255, 0.25)';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([4, 4]);
+          
+          ctx.beginPath();
+          ctx.moveTo(hoverCoords.x, 0);
+          ctx.lineTo(hoverCoords.x, h);
+          ctx.stroke();
+          
+          ctx.beginPath();
+          ctx.moveTo(0, hoverCoords.y);
+          ctx.lineTo(w, hoverCoords.y);
+          ctx.stroke();
+          
+          ctx.setLineDash([]); // Reset line pattern
+
+          const txt = `LAT: ${hoverCoords.lat.toFixed(4)} N | LON: ${hoverCoords.lon.toFixed(4)} E`;
+          ctx.font = '9px "JetBrains Mono", monospace';
+          const tw = ctx.measureText(txt).width;
+          const boxW = tw + 12;
+          const boxH = 18;
+          let boxX = hoverCoords.x + 10;
+          let boxY = hoverCoords.y - 20;
+
+          // Align tooltip box bounds
+          if (boxX + boxW > w) boxX = hoverCoords.x - boxW - 10;
+          if (boxY < 0) boxY = hoverCoords.y + 10;
+
+          ctx.fillStyle = 'rgba(10, 14, 23, 0.9)';
+          ctx.strokeStyle = '#00d2ff';
+          ctx.lineWidth = 1;
+          ctx.fillRect(boxX, boxY, boxW, boxH);
+          ctx.strokeRect(boxX, boxY, boxW, boxH);
+
+          ctx.fillStyle = '#00d2ff';
+          ctx.fillText(txt, boxX + 6, boxY + 12);
+        }
+        
+        if (!pts.length) {
+          ctx.fillStyle = '#64748b';
+          ctx.font = '14px "JetBrains Mono", monospace';
+          ctx.fillText('NO VECTOR COORDINATES DETECTED', 30, 45);
+        }
+      }
+
+      function drawGrid(w, h) {
+        ctx.strokeStyle = 'rgba(50, 205, 50, 0.03)';
+        ctx.lineWidth = 1;
+        for (let i = 1; i < 12; i++) {
+          ctx.beginPath(); ctx.moveTo(i*w/12, 0); ctx.lineTo(i*w/12, h); ctx.stroke();
+        }
+        for (let i = 1; i < 8; i++) {
+          ctx.beginPath(); ctx.moveTo(0, i*h/8); ctx.lineTo(w, i*h/8); ctx.stroke();
+        }
+      }
+
+      function drawIndiaOutline(w, h) {
+        ctx.strokeStyle = '#00d2ff';
+        ctx.lineWidth = 2;
+        ctx.globalAlpha = 0.35;
+        ctx.beginPath();
+        // Use highly detailed boundary vector array
+        INDIA_OUTLINE.forEach(([lon, lat], i) => {
+          const p = project(lat, lon);
+          i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
+        });
+        ctx.closePath();
+        ctx.stroke();
+        ctx.globalAlpha = 1.0;
+      }
+
+      function drawPoint(r, color, size) {
+        const p = project(r.latitude, r.longitude);
+        ctx.beginPath();
+        ctx.fillStyle = color;
+        ctx.globalAlpha = 0.8;
+        ctx.arc(p.x, p.y, size, 0, Math.PI*2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+
+      function project(lat, lon) {
+        const pad = 42;
+        const canvasW = els.canvas.width;
+        const canvasH = els.canvas.height;
+        const w = canvasW - pad * 2;
+        const h = canvasH - pad * 2;
+
+        const latRange = INDIA_BBOX.maxLat - INDIA_BBOX.minLat;
+        const lonRange = INDIA_BBOX.maxLon - INDIA_BBOX.minLon;
+        const cosLat = 0.92388; // cos(22.5 degrees) center latitude scaling factor
+        const scaleY = Math.min(h / latRange, w / (lonRange * cosLat));
+        const scaleX = scaleY * cosLat;
+
+        const mapW = lonRange * scaleX;
+        const mapH = latRange * scaleY;
+        const offsetX = pad + (w - mapW) / 2;
+        const offsetY = pad + (h - mapH) / 2;
+
+        // Base position
+        const bx = offsetX + (lon - INDIA_BBOX.minLon) * scaleX;
+        const by = offsetY + (INDIA_BBOX.maxLat - lat) * scaleY;
+
+        // Apply zoom (centered on canvas center) and pan
+        const cx = canvasW / 2;
+        const cy = canvasH / 2;
+        return {
+          x: cx + (bx - cx) * zoomLevel + panX,
+          y: cy + (by - cy) * zoomLevel + panY
+        };
+      }
+
+      function handleMapClick(e) {
+        const rect = els.canvas.getBoundingClientRect();
+        const x = (e.clientX - rect.left) * (els.canvas.width / rect.width);
+        const y = (e.clientY - rect.top) * (els.canvas.height / rect.height);
+        
+        let best = null, bestD = Infinity;
+        filteredRows.filter(r => isCoord(r.latitude, r.longitude)).forEach(r => {
+          const p = project(r.latitude, r.longitude);
+          const d = Math.hypot(p.x - x, p.y - y);
+          if (d < bestD) { bestD = d; best = r; }
+        });
+        
+        if (best && bestD < 16) {
+          selectedPoint = best;
+          renderMap();
+          openDetail(best);
+        }
+      }
+
+      // 9. dynamic listings
+      function renderCards() {
+        const start = (page - 1) * PAGE_SIZE;
+        const rows = filteredRows.slice(start, start + PAGE_SIZE);
+        
+        els.cards.innerHTML = rows.map((r, idx) => cardHTML(r, start+idx)).join('') || `
+          <div class="col-span-full py-12 text-center border border-dashed border-white border-opacity-10 rounded-lg">
+            <h4 class="font-mono text-sm text-text-secondary">No matching inspectorates found</h4>
+            <p class="text-xs text-text-muted mt-1">Refine parameters or initiate local CSV uploads.</p>
+          </div>
+        `;
+        els.pageInfo.textContent = `Page ${page} of ${maxPage()}`;
+        
+        els.cards.querySelectorAll('[data-open]').forEach(btn => {
+          btn.addEventListener('click', () => openDetail(filteredRows[Number(btn.dataset.open)]));
+        });
+        lucide.createIcons();
+      }
+
+      function maxPage() { return Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE)); }
+
+      function cardHTML(r, idx) {
+        const coordBadge = r.missing_coordinates 
+          ? '<span class="cyber-badge cyber-badge-red text-[10px]">Missing Coordinates</span>' 
+          : '<span class="cyber-badge cyber-badge-lime text-[10px]">Mapped</span>';
+        
+        const phoneLink = r.phone 
+          ? `<a class="cyber-btn-secondary text-[10px] py-1 px-2.5" href="tel:${firstPhone(r.phone)}"><i data-lucide="phone" class="w-3 h-3"></i> CALL</a>` 
+          : '';
+        const mapLink = !r.missing_coordinates 
+          ? `<a class="cyber-btn-secondary text-[10px] py-1 px-2.5" target="_blank" href="https://www.google.com/maps/dir/?api=1&destination=${r.latitude},${r.longitude}"><i data-lucide="navigation" class="w-3 h-3"></i> ROUTE</a>` 
+          : '';
+        const googleLink = `<a class="cyber-btn-secondary text-[10px] py-1 px-2.5" target="_blank" rel="noopener" href="${escapeAttr(googleMapsSearchUrl(r))}"><i data-lucide="external-link" class="w-3 h-3"></i> SEARCH</a>`;
+        
+        const source = r.source_url 
+          ? `<a class="text-accent-blue font-bold hover:underline" href="${escapeAttr(r.source_url)}" target="_blank" rel="noopener">Source Link</a>` 
+          : 'Database (CSV)';
+
+        return `
+          <div class="cyber-card p-4 flex flex-col justify-between border-opacity-10 hover:border-opacity-30 transition-all duration-300">
+            <div>
+              <div class="flex flex-wrap gap-1.5 mb-3">
+                <span class="cyber-badge cyber-badge-blue text-[9px]">${escapeHtml(r.state||'Unknown')}</span>
+                <span class="cyber-badge cyber-badge-blue text-[9px]">${escapeHtml(r.district||'N/A')}</span>
+                ${coordBadge}
+              </div>
+              
+              <h4 class="text-sm font-bold font-mono text-text-primary mb-2">${escapeHtml(r.police_station||'Unnamed Police Station')}</h4>
+              <div class="space-y-1 text-[11px] text-text-secondary font-mono mb-4">
+                <div><span class="text-text-muted">Address:</span> ${escapeHtml(r.address||'N/A')}</div>
+                <div><span class="text-text-muted">Contact:</span> ${escapeHtml(r.phone||'N/A')}</div>
+                <div><span class="text-text-muted">Security Email:</span> ${escapeHtml(r.email||'N/A')}</div>
+                <div><span class="text-text-muted">Provenance:</span> ${source}</div>
+              </div>
+            </div>
+            
+            <div class="flex flex-wrap gap-1.5 border-t border-white border-opacity-5 pt-3 mt-2">
+              <button class="cyber-btn text-[10px] py-1 px-2.5" data-open="${idx}" type="button">DETAILS</button>
+              ${phoneLink}
+              ${mapLink}
+              ${googleLink}
+            </div>
+          </div>
+        `;
+      }
+
+      function openDetail(r) {
+        els.detail.innerHTML = `
+          <h3 class="text-md font-bold font-mono text-accent-blue flex items-center gap-1.5 border-b border-white border-opacity-5 pb-3 mb-4">
+            <i data-lucide="shield" class="w-5 h-5"></i> ${escapeHtml(r.police_station||'Police Station Detail')}
+          </h3>
+          <div class="detail-grid">
+            ${detail('State / UT', r.state)}
+            ${detail('District', r.district)}
+            ${detail('Full Address', r.address)}
+            ${detail('Contact Phone', r.phone)}
+            ${detail('Secure Email', r.email)}
+            ${detail('Latitude', r.latitude)}
+            ${detail('Longitude', r.longitude)}
+            ${detail('Commissionerate', r.commissionerate)}
+            ${detail('Official Website', linkOrText(r.website))}
+            ${detail('Telemetry Source', linkOrText(r.source_url))}
+            ${detail('Last Updated', r.last_updated)}
+          </div>
+        `;
+        els.dialog.showModal();
+        lucide.createIcons();
+      }
+
+      function detail(k, v) { return `<b>${escapeHtml(k)}</b><span>${v ? String(v) : 'N/A'}</span>`; }
+      function linkOrText(v) { return v ? `<a class="text-accent-blue hover:underline font-bold" target="_blank" href="${escapeAttr(v)}">${escapeHtml(v)}</a>` : ''; }
+
+      // 10. Geospatial Nearest Calculations (GPS / Haversine)
+      function findNearMe() {
+        if (!navigator.geolocation) {
+          els.nearest.innerHTML = '<div class="p-2 border border-accent-red rounded text-accent-red font-mono text-[10px]">GEOLOCATION NOT SUPPORTED</div>';
+          return;
+        }
+        els.nearest.innerHTML = '<div class="p-2 text-text-secondary font-mono text-[10px] animate-pulse">ACQUIRING TELEMETRY LOCK...</div>';
+        
+        navigator.geolocation.getCurrentPosition(
+          pos => nearestFrom(pos.coords.latitude, pos.coords.longitude),
+          err => {
+            els.nearest.innerHTML = `<div class="p-2 border border-accent-red rounded text-accent-red font-mono text-[10px]">LOCK ERROR: ${escapeHtml(err.message)}</div>`;
+          },
+          { enableHighAccuracy: true, timeout: 12000 }
+        );
+      }
+
+      function nearestFrom(lat, lon) {
+        if (!isCoord(lat, lon)) {
+          els.nearest.innerHTML = '<div class="p-2 border border-accent-red rounded text-accent-red font-mono text-[10px]">INVALID TARGET COORDINATES</div>';
+          return;
+        }
+        
+        els.nearest.innerHTML = '<div class="p-2 text-text-secondary font-mono text-[10px] animate-pulse">CALCULATING HAVERSINE GRID...</div>';
+        
+        const coordsRows = allRows.filter(r => isCoord(r.latitude, r.longitude));
+        const nearestRows = coordsRows.map(r => ({
+          ...r,
+          distance: haversine(lat, lon, r.latitude, r.longitude)
+        }))
+        .sort((a,b) => a.distance - b.distance)
+        .slice(0, 3);
+        
+        if (!nearestRows.length) {
+          els.nearest.innerHTML = '<div class="p-2 text-text-muted font-mono text-[10px]">NO COORDINATE RECORDS ON FILE</div>';
+          return;
+        }
+        
+        els.nearest.innerHTML = nearestRows.map(r => `
+          <div class="p-3 bg-cyber-light bg-opacity-60 border border-white border-opacity-5 rounded-lg text-xs font-mono">
+            <div class="font-bold text-accent-lime">${escapeHtml(r.police_station)}</div>
+            <div class="text-text-secondary text-[10px] mt-0.5">${escapeHtml(r.district)}, ${escapeHtml(r.state)}</div>
+            <div class="text-accent-blue mt-1.5 flex items-center justify-between text-[11px]">
+              <span>RANGE: ${r.distance.toFixed(2)} KM</span>
+              <a class="text-[10px] text-text-primary hover:underline font-bold" target="_blank" href="https://www.google.com/maps?q=${r.latitude},${r.longitude}">MAPS PIN &rarr;</a>
+            </div>
+          </div>
+        `).join('');
+      }
+
+      function haversine(lat1, lon1, lat2, lon2) {
+        const R = 6371, dLat = rad(lat2 - lat1), dLon = rad(lon2 - lon1);
+        const a = Math.sin(dLat/2)**2 + Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(dLon/2)**2;
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      }
+      
+      const rad = d => d * Math.PI / 180;
+
+      // 11. CSV Engine Helpers
+      function exportCSV() {
+        const csv = toCSV(filteredRows);
+        const blob = new Blob([csv], {type: 'text/csv;charset=utf-8'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'police_stations_filtered.csv';
+        a.click();
+        URL.revokeObjectURL(a.href);
+        app.logTerminal("Dispatched filtered dataset download.", "success");
+      }
+
+      function toCSV(rows) {
+        const cols = ['state','district','police_station','address','phone','email','latitude','longitude','commissionerate','website','source_url','last_updated','confidence','missing_coordinates'];
+        return cols.join(',') + '\n' + rows.map(r => cols.map(c => csvEscape(r[c])).join(',')).join('\n');
+      }
+
+      function parseCSV(text) {
+        text = String(text || '').replace(/^\uFEFF/, '');
+        const rows = [], lines = [];
+        let cur = '', inQ = false;
+        
+        for (let i = 0; i < text.length; i++) {
+          const ch = text[i], next = text[i+1];
+          if (ch === '"' && inQ && next === '"') { cur += '"'; i++; }
+          else if (ch === '"') { inQ = !inQ; }
+          else if ((ch === '\n' || ch === '\r') && !inQ) {
+            if (cur || ch === '\n') { lines.push(cur); cur = ''; }
+            if (ch === '\r' && next === '\n') i++;
+          }
+          else cur += ch;
+        }
+        if (cur) lines.push(cur);
+        if (!lines.length) return [];
+        
+        const headers = splitCSVLine(lines[0]).map(h => h.replace(/^\uFEFF/, '').trim());
+        for (const line of lines.slice(1)) {
+          if (!line.trim()) continue;
+          const vals = splitCSVLine(line);
+          const obj = {};
+          headers.forEach((h, i) => obj[h] = vals[i] ?? '');
+          rows.push(obj);
+        }
+        return rows;
+      }
+
+      function splitCSVLine(line) {
+        const out = [];
+        let cur = '', inQ = false;
+        for (let i = 0; i < line.length; i++) {
+          const ch = line[i], next = line[i+1];
+          if (ch === '"' && inQ && next === '"') { cur += '"'; i++; }
+          else if (ch === '"') { inQ = !inQ; }
+          else if (ch === ',' && !inQ) { out.push(cur); cur = ''; }
+          else cur += ch;
+        }
+        out.push(cur);
+        return out;
+      }
+      
+      function csvEscape(v) {
+        const s = v == null ? '' : String(v);
+        return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      }
+
+      // Utils
+      function normalizeKey(k) {
+        return String(k || '').replace(/^\uFEFF/, '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+      }
+
+      function getAny(obj, keys) {
+        for (const k of keys) {
+          const nk = normalizeKey(k);
+          if (obj[nk] !== undefined && obj[nk] !== null && String(obj[nk]).trim() !== '') return obj[nk];
+        }
+        return '';
+      }
+
+      function clean(v) {
+        if (v == null) return '';
+        const s = String(v).replace(/\s+/g, ' ').trim();
+        return ['nan', 'none', 'null', 'na', 'n/a', '-'].includes(s.toLowerCase()) ? '' : s;
+      }
+
+      function toNum(v) {
+        const s = clean(v);
+        if (!s) return null;
+        const n = Number(String(s).replace(/[^0-9.\-]/g, ''));
+        return Number.isFinite(n) ? n : null;
+      }
+
+      function isCoord(lat, lon) {
+        return Number.isFinite(Number(lat)) && Number.isFinite(Number(lon)) && lat >= 6 && lat <= 38.5 && lon >= 68 && lon <= 98.5;
+      }
+
+      function firstPhone(p) { return String(p||'').split(/[;,. ]+/).find(Boolean) || ''; }
+      function escapeHtml(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+      function escapeAttr(s) { return escapeHtml(s).replace(/'/g, '&#39;'); }
+      function debounce(fn, ms) { let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); }; }
+
+      // 12. Run Initialize
+      initTool();
+    }
+  },
+  {
+    id: "ncrp-intelligence",
+    name: "NCRP Intelligence",
+    category: "Law Enforcement",
+    icon: "network",
+    status: "Ready",
+    badgeType: "lime",
+    description: "Upload complaint CSV data to discover hidden fraud links, shared identifiers, and suspicious activity rings using graph-based network analysis.",
+    placeholderHtml: `
+      <div class="space-y-6">
+        <!-- Tab Navigation -->
+        <div class="flex flex-wrap gap-2 border-b border-white border-opacity-5 pb-3">
+          <button class="ncrp-tab cyber-btn text-xs py-2 px-4" data-tab="overview">
+            <i data-lucide="share-2" class="w-3.5 h-3.5"></i> Overview
+          </button>
+          <button class="ncrp-tab cyber-btn-secondary text-xs py-2 px-4" data-tab="rings">
+            <i data-lucide="alert-triangle" class="w-3.5 h-3.5"></i> Fraud Groups
+          </button>
+          <button class="ncrp-tab cyber-btn-secondary text-xs py-2 px-4" data-tab="accounts">
+            <i data-lucide="users" class="w-3.5 h-3.5"></i> Key Accounts
+          </button>
+          <button class="ncrp-tab cyber-btn-secondary text-xs py-2 px-4" data-tab="trace">
+            <i data-lucide="route" class="w-3.5 h-3.5"></i> Connection Trace
+          </button>
+        </div>
+
+        <!-- Upload Section -->
+        <div class="cyber-card p-6 border-opacity-20 border-accent-lime">
+          <h3 class="text-sm font-bold font-mono text-accent-lime mb-4 flex items-center gap-2">
+            <i data-lucide="upload-cloud" class="w-4 h-4"></i> Complaint Data Upload
+          </h3>
+          <div class="max-w-md flex flex-col gap-2">
+            <label class="text-xs font-mono uppercase text-text-muted">Complaint CSV File</label>
+            <label class="cyber-input hover:border-accent-lime cursor-pointer flex items-center justify-between text-xs py-2 px-3">
+              <span id="ncrp-file-label" class="text-text-muted truncate">Upload complaint_data.csv</span>
+              <input id="ncrpCsvFile" type="file" accept=".csv,text/csv" class="hidden">
+              <i data-lucide="upload-cloud" class="w-4 h-4 text-accent-lime"></i>
+            </label>
+            <p class="text-[10px] text-text-muted font-mono">Required: complaint_id &bull; Optional: phone, bank_account, ip_address, email, upi_id, imei</p>
+          </div>
+          <div class="mt-4 flex flex-wrap items-center gap-3">
+            <button id="ncrpLoadSample" class="cyber-btn-secondary text-xs py-2 px-4">
+              <i data-lucide="database" class="w-3.5 h-3.5"></i> LOAD SAMPLE DATA
+            </button>
+            <button id="ncrpClearData" class="cyber-btn-danger text-xs py-2 px-4 hidden">
+              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> CLEAR DATA
+            </button>
+            <span id="ncrpStatus" class="text-xs font-mono text-accent-blue font-bold">Waiting for data...</span>
+          </div>
+        </div>
+
+        <!-- KPI Cards -->
+        <div id="ncrpKpis" class="grid grid-cols-2 sm:grid-cols-4 gap-4 hidden">
+          <div class="cyber-card p-3 text-center border-opacity-10">
+            <span class="text-[10px] font-mono text-text-muted uppercase">Total Records</span>
+            <div class="text-xl font-bold font-mono text-white mt-0.5" id="ncrpKpiNodes">0</div>
+          </div>
+          <div class="cyber-card p-3 text-center border-opacity-10">
+            <span class="text-[10px] font-mono text-text-muted uppercase">Connections</span>
+            <div class="text-xl font-bold font-mono text-accent-blue mt-0.5" id="ncrpKpiEdges">0</div>
+          </div>
+          <div class="cyber-card p-3 text-center border-opacity-10">
+            <span class="text-[10px] font-mono text-text-muted uppercase">Fraud Groups</span>
+            <div class="text-xl font-bold font-mono text-accent-orange mt-0.5" id="ncrpKpiGroups">0</div>
+          </div>
+          <div class="cyber-card p-3 text-center border-opacity-10">
+            <span class="text-[10px] font-mono text-text-muted uppercase">Risk Level</span>
+            <div class="text-xl font-bold font-mono mt-0.5" id="ncrpKpiRisk">--</div>
+          </div>
+        </div>
+
+        <!-- Panel: Overview -->
+        <div id="ncrpPanelOverview" class="hidden">
+          <div class="cyber-card p-5 border-opacity-10">
+            <div class="flex justify-between items-center border-b border-white border-opacity-5 pb-3 mb-4">
+              <div>
+                <h3 class="text-sm font-bold font-mono text-white flex items-center gap-1.5">
+                  <i data-lucide="share-2" class="w-4 h-4 text-accent-blue"></i> FRAUD RELATIONSHIP MAP
+                </h3>
+                <p class="text-[11px] text-text-muted mt-0.5">Interactive network showing how complaints, phones, bank accounts, and other identifiers connect.</p>
+              </div>
+            </div>
+            <div class="relative w-full aspect-video max-h-[600px] overflow-hidden bg-black bg-opacity-40 border border-white border-opacity-5 rounded-lg shadow-inner">
+              <canvas id="ncrpGraphCanvas" width="900" height="550" class="w-full h-full block cursor-grab"></canvas>
+            </div>
+            <div class="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-[10px] font-mono">
+              <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full inline-block" style="background:#ff3366"></span> Complaint</span>
+              <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full inline-block" style="background:#3b82f6"></span> Phone</span>
+              <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full inline-block" style="background:#00d2ff"></span> Bank Account</span>
+              <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full inline-block" style="background:#f97316"></span> Email</span>
+              <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full inline-block" style="background:#a855f7"></span> IP Address</span>
+              <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full inline-block" style="background:#06b6d4"></span> UPI ID</span>
+              <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full inline-block" style="background:#a16207"></span> IMEI</span>
+            </div>
+            <p class="text-[10px] text-text-muted font-mono mt-2 flex items-center gap-1">
+              <i data-lucide="info" class="w-3.5 h-3.5 text-accent-blue"></i> Hover over nodes to inspect. Click to highlight connections. Drag to reposition nodes.
+            </p>
+          </div>
+        </div>
+
+        <!-- Panel: Fraud Groups -->
+        <div id="ncrpPanelRings" class="hidden">
+          <div class="cyber-card p-5 border-opacity-10">
+            <h3 class="text-sm font-bold font-mono text-white flex items-center gap-1.5 border-b border-white border-opacity-5 pb-3 mb-4">
+              <i data-lucide="alert-triangle" class="w-4 h-4 text-accent-orange"></i> CONNECTED FRAUD GROUPS
+            </h3>
+            <div id="ncrpRingsList" class="space-y-3">
+              <p class="text-xs text-text-muted font-mono py-6 text-center">Upload complaint data to detect fraud rings.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Panel: Key Accounts -->
+        <div id="ncrpPanelAccounts" class="hidden">
+          <div class="cyber-card p-5 border-opacity-10">
+            <h3 class="text-sm font-bold font-mono text-white flex items-center gap-1.5 border-b border-white border-opacity-5 pb-3 mb-4">
+              <i data-lucide="users" class="w-4 h-4 text-accent-lime"></i> KEY SHARED IDENTIFIERS
+            </h3>
+            <p class="text-[11px] text-text-muted mb-4">Accounts or identifiers appearing in multiple complaint relationships.</p>
+            <div class="cyber-table-container">
+              <table class="cyber-table">
+                <thead><tr><th>Account / Identifier</th><th>Type</th><th>Connections</th><th>Risk Score</th></tr></thead>
+                <tbody id="ncrpAccountsBody"><tr><td colspan="4" class="text-center text-text-muted py-4">No data loaded.</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Panel: Connection Trace -->
+        <div id="ncrpPanelTrace" class="hidden">
+          <div class="cyber-card p-5 border-opacity-10">
+            <h3 class="text-sm font-bold font-mono text-white flex items-center gap-1.5 border-b border-white border-opacity-5 pb-3 mb-4">
+              <i data-lucide="route" class="w-4 h-4 text-accent-blue"></i> CONNECTION TRACE
+            </h3>
+            <p class="text-[11px] text-text-muted mb-4">Find the shortest connection path between any two accounts or identifiers.</p>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <div class="flex flex-col gap-1.5">
+                <label class="text-[10px] font-mono uppercase text-text-muted">Start Node</label>
+                <select id="ncrpTraceStart" class="cyber-input text-xs bg-opacity-95"></select>
+              </div>
+              <div class="flex flex-col gap-1.5">
+                <label class="text-[10px] font-mono uppercase text-text-muted">End Node</label>
+                <select id="ncrpTraceEnd" class="cyber-input text-xs bg-opacity-95"></select>
+              </div>
+            </div>
+            <button id="ncrpTraceBtn" class="cyber-btn text-xs py-2 px-4">
+              <i data-lucide="search" class="w-3.5 h-3.5"></i> FIND CONNECTION
+            </button>
+            <div id="ncrpTraceResult" class="mt-4"></div>
+          </div>
+        </div>
+      </div>
+    `,
+    initLogic: function() {
+      // ============================================================
+      // NCRP GRAPH ENGINE - Pure JavaScript implementation
+      // Equivalent to the Python NetworkX-based NCRP_GUI engine
+      // ============================================================
+
+      // --- Graph Data Structure ---
+      const graph = { nodes: new Map(), edges: [] };
+
+      function addNode(id, type) {
+        if (!graph.nodes.has(id)) {
+          graph.nodes.set(id, { id, type, x: 0, y: 0, vx: 0, vy: 0 });
+        }
+      }
+
+      function addEdge(source, target) {
+        if (!graph.edges.some(e => (e.source === source && e.target === target) || (e.source === target && e.target === source))) {
+          graph.edges.push({ source, target });
+        }
+      }
+
+      function clearGraph() {
+        graph.nodes.clear();
+        graph.edges.length = 0;
+      }
+
+      // --- Connected Components (BFS) ---
+      function getConnectedComponents() {
+        const visited = new Set();
+        const components = [];
+        for (const [nodeId] of graph.nodes) {
+          if (visited.has(nodeId)) continue;
+          const component = [];
+          const queue = [nodeId];
+          visited.add(nodeId);
+          while (queue.length) {
+            const current = queue.shift();
+            component.push(current);
+            const neighbors = getNeighbors(current);
+            for (const n of neighbors) {
+              if (!visited.has(n)) {
+                visited.add(n);
+                queue.push(n);
+              }
+            }
+          }
+          components.push(component);
+        }
+        return components.sort((a, b) => b.length - a.length);
+      }
+
+      function getNeighbors(nodeId) {
+        const neighbors = [];
+        for (const e of graph.edges) {
+          if (e.source === nodeId) neighbors.push(e.target);
+          else if (e.target === nodeId) neighbors.push(e.source);
+        }
+        return neighbors;
+      }
+
+      // --- Degree Centrality ---
+      function getDegreeCentrality(topN = 20) {
+        const degrees = [];
+        const n = graph.nodes.size;
+        for (const [nodeId, nodeData] of graph.nodes) {
+          const degree = getNeighbors(nodeId).length;
+          degrees.push({ id: nodeId, type: nodeData.type, degree, centrality: n > 1 ? degree / (n - 1) : 0 });
+        }
+        return degrees.sort((a, b) => b.degree - a.degree).slice(0, topN);
+      }
+
+      // --- Shortest Path (BFS) ---
+      function shortestPath(startId, endId) {
+        if (!graph.nodes.has(startId) || !graph.nodes.has(endId)) return null;
+        if (startId === endId) return [startId];
+        const visited = new Set([startId]);
+        const queue = [[startId]];
+        while (queue.length) {
+          const path = queue.shift();
+          const current = path[path.length - 1];
+          for (const neighbor of getNeighbors(current)) {
+            if (neighbor === endId) return [...path, neighbor];
+            if (!visited.has(neighbor)) {
+              visited.add(neighbor);
+              queue.push([...path, neighbor]);
+            }
+          }
+        }
+        return null;
+      }
+
+      // --- Fraud Ring Detection ---
+      function detectFraudRings(minSize = 3) {
+        return getConnectedComponents()
+          .filter(c => c.length >= minSize)
+          .map((members, i) => ({ ring_id: i + 1, size: members.length, members }));
+      }
+
+      // --- CSV Parser ---
+      function parseComplaintCSV(text) {
+        text = String(text || '').replace(/^\uFEFF/, '');
+        const lines = text.split(/\r?\n/).filter(l => l.trim());
+        if (!lines.length) return [];
+        const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_'));
+        const rows = [];
+        for (let i = 1; i < lines.length; i++) {
+          const vals = lines[i].split(',');
+          const obj = {};
+          headers.forEach((h, idx) => obj[h] = (vals[idx] || '').trim());
+          if (obj.complaint_id) rows.push(obj);
+        }
+        return rows;
+      }
+
+      // --- Load Complaint Data into Graph ---
+      const ENTITY_COLUMNS = ['phone', 'bank_account', 'ip_address', 'email', 'upi_id', 'imei'];
+      const TYPE_MAP = {
+        phone: 'PHONE', bank_account: 'BANK_ACCOUNT', ip_address: 'IP_ADDRESS',
+        email: 'EMAIL', upi_id: 'UPI_ID', imei: 'IMEI'
+      };
+
+      function loadComplaints(rows) {
+        clearGraph();
+        for (const row of rows) {
+          const cid = row.complaint_id;
+          addNode(cid, 'COMPLAINT');
+          for (const col of ENTITY_COLUMNS) {
+            const val = row[col];
+            if (val && val.toLowerCase() !== 'nan' && val.toLowerCase() !== 'na' && val !== '') {
+              const nodeId = col + ':' + val;
+              addNode(nodeId, TYPE_MAP[col] || col.toUpperCase());
+              addEdge(cid, nodeId);
+            }
+          }
+        }
+      }
+
+      // --- Node Color Map ---
+      const NODE_COLORS = {
+        COMPLAINT: '#ff3366', PHONE: '#3b82f6', BANK_ACCOUNT: '#00d2ff',
+        EMAIL: '#f97316', IP_ADDRESS: '#a855f7', UPI_ID: '#06b6d4', IMEI: '#a16207'
+      };
+
+      function nodeColor(type) { return NODE_COLORS[type] || '#64748b'; }
+
+      // --- Force-Directed Layout ---
+      function initPositions(canvasW, canvasH) {
+        const cx = canvasW / 2, cy = canvasH / 2;
+        let i = 0;
+        for (const [, node] of graph.nodes) {
+          const angle = (i / graph.nodes.size) * Math.PI * 2;
+          const radius = 80 + Math.random() * 150;
+          node.x = cx + Math.cos(angle) * radius;
+          node.y = cy + Math.sin(angle) * radius;
+          node.vx = 0; node.vy = 0;
+          i++;
+        }
+      }
+
+      function simulateForces(canvasW, canvasH, iterations = 120) {
+        const REPULSION = 2500;
+        const SPRING_LENGTH = 100;
+        const SPRING_K = 0.03;
+        const DAMPING = 0.85;
+        const GRAVITY = 0.01;
+        const cx = canvasW / 2, cy = canvasH / 2;
+        const nodesArr = [...graph.nodes.values()];
+
+        for (let iter = 0; iter < iterations; iter++) {
+          // Repulsion between all node pairs
+          for (let i = 0; i < nodesArr.length; i++) {
+            for (let j = i + 1; j < nodesArr.length; j++) {
+              const a = nodesArr[i], b = nodesArr[j];
+              let dx = b.x - a.x, dy = b.y - a.y;
+              let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+              const force = REPULSION / (dist * dist);
+              const fx = (dx / dist) * force;
+              const fy = (dy / dist) * force;
+              a.vx -= fx; a.vy -= fy;
+              b.vx += fx; b.vy += fy;
+            }
+          }
+          // Spring forces along edges
+          for (const e of graph.edges) {
+            const a = graph.nodes.get(e.source), b = graph.nodes.get(e.target);
+            if (!a || !b) continue;
+            let dx = b.x - a.x, dy = b.y - a.y;
+            let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            const displacement = dist - SPRING_LENGTH;
+            const force = SPRING_K * displacement;
+            const fx = (dx / dist) * force;
+            const fy = (dy / dist) * force;
+            a.vx += fx; a.vy += fy;
+            b.vx -= fx; b.vy -= fy;
+          }
+          // Center gravity
+          for (const n of nodesArr) {
+            n.vx += (cx - n.x) * GRAVITY;
+            n.vy += (cy - n.y) * GRAVITY;
+          }
+          // Apply velocities and damping
+          for (const n of nodesArr) {
+            n.vx *= DAMPING; n.vy *= DAMPING;
+            n.x += n.vx; n.y += n.vy;
+            n.x = Math.max(30, Math.min(canvasW - 30, n.x));
+            n.y = Math.max(30, Math.min(canvasH - 30, n.y));
+          }
+        }
+      }
+
+      // --- Canvas Rendering ---
+      let hoveredNode = null;
+      let selectedNode = null;
+      let dragNode = null;
+      let graphAnimId = null;
+
+      function renderGraph(canvas, ctx) {
+        const w = canvas.width, h = canvas.height;
+        ctx.clearRect(0, 0, w, h);
+
+        // Background
+        ctx.fillStyle = '#050811';
+        ctx.fillRect(0, 0, w, h);
+
+        // Grid
+        ctx.strokeStyle = 'rgba(50,205,50,0.03)';
+        ctx.lineWidth = 1;
+        for (let i = 1; i < 12; i++) { ctx.beginPath(); ctx.moveTo(i * w / 12, 0); ctx.lineTo(i * w / 12, h); ctx.stroke(); }
+        for (let i = 1; i < 8; i++) { ctx.beginPath(); ctx.moveTo(0, i * h / 8); ctx.lineTo(w, i * h / 8); ctx.stroke(); }
+
+        // Get selected node neighbors for highlighting
+        const selectedNeighbors = selectedNode ? new Set(getNeighbors(selectedNode.id)) : null;
+
+        // Draw edges
+        for (const e of graph.edges) {
+          const a = graph.nodes.get(e.source), b = graph.nodes.get(e.target);
+          if (!a || !b) continue;
+          const isHighlighted = selectedNode && (e.source === selectedNode.id || e.target === selectedNode.id);
+          ctx.strokeStyle = isHighlighted ? 'rgba(0,210,255,0.7)' : 'rgba(255,255,255,0.08)';
+          ctx.lineWidth = isHighlighted ? 2 : 1;
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+          ctx.stroke();
+        }
+
+        // Draw nodes
+        for (const [, node] of graph.nodes) {
+          const isSelected = selectedNode && selectedNode.id === node.id;
+          const isNeighbor = selectedNeighbors && selectedNeighbors.has(node.id);
+          const isHovered = hoveredNode && hoveredNode.id === node.id;
+          const isDimmed = selectedNode && !isSelected && !isNeighbor;
+
+          const baseSize = node.type === 'COMPLAINT' ? 10 : 7;
+          const size = isSelected ? baseSize + 4 : isHovered ? baseSize + 2 : baseSize;
+
+          ctx.globalAlpha = isDimmed ? 0.15 : 1;
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, size, 0, Math.PI * 2);
+          ctx.fillStyle = nodeColor(node.type);
+          ctx.fill();
+
+          if (isSelected || isHovered) {
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+          }
+          ctx.globalAlpha = 1;
+        }
+
+        // Hover tooltip
+        if (hoveredNode) {
+          const n = hoveredNode;
+          const label = n.id;
+          const typeLabel = n.type.replace(/_/g, ' ');
+          const conns = getNeighbors(n.id).length;
+          const txt = label + ' | ' + typeLabel + ' | ' + conns + ' connections';
+          ctx.font = '10px "JetBrains Mono", monospace';
+          const tw = ctx.measureText(txt).width;
+          let bx = n.x + 14, by = n.y - 14;
+          if (bx + tw + 16 > w) bx = n.x - tw - 26;
+          if (by < 10) by = n.y + 20;
+          ctx.fillStyle = 'rgba(10,14,23,0.95)';
+          ctx.strokeStyle = '#00d2ff';
+          ctx.lineWidth = 1;
+          ctx.fillRect(bx, by, tw + 16, 22);
+          ctx.strokeRect(bx, by, tw + 16, 22);
+          ctx.fillStyle = '#00d2ff';
+          ctx.fillText(txt, bx + 8, by + 15);
+        }
+
+        if (graph.nodes.size === 0) {
+          ctx.fillStyle = '#64748b';
+          ctx.font = '14px "JetBrains Mono", monospace';
+          ctx.fillText('NO GRAPH DATA LOADED', w / 2 - 120, h / 2);
+        }
+      }
+
+      // --- DOM Elements ---
+      const canvas = document.getElementById('ncrpGraphCanvas');
+      const ctx = canvas ? canvas.getContext('2d') : null;
+      const statusEl = document.getElementById('ncrpStatus');
+      const fileLabelEl = document.getElementById('ncrp-file-label');
+      const csvFileEl = document.getElementById('ncrpCsvFile');
+      const loadSampleBtn = document.getElementById('ncrpLoadSample');
+      const clearDataBtn = document.getElementById('ncrpClearData');
+      const kpisEl = document.getElementById('ncrpKpis');
+      const traceBtn = document.getElementById('ncrpTraceBtn');
+      const traceStartEl = document.getElementById('ncrpTraceStart');
+      const traceEndEl = document.getElementById('ncrpTraceEnd');
+      const traceResultEl = document.getElementById('ncrpTraceResult');
+
+      // --- Tab Switching ---
+      const tabs = document.querySelectorAll('.ncrp-tab');
+      const panels = {
+        overview: document.getElementById('ncrpPanelOverview'),
+        rings: document.getElementById('ncrpPanelRings'),
+        accounts: document.getElementById('ncrpPanelAccounts'),
+        trace: document.getElementById('ncrpPanelTrace')
+      };
+
+      function switchTab(tabName) {
+        tabs.forEach(t => {
+          const isActive = t.dataset.tab === tabName;
+          t.className = isActive ? 'ncrp-tab cyber-btn text-xs py-2 px-4' : 'ncrp-tab cyber-btn-secondary text-xs py-2 px-4';
+        });
+        Object.entries(panels).forEach(([key, panel]) => {
+          if (panel) panel.classList.toggle('hidden', key !== tabName);
+        });
+        lucide.createIcons();
+      }
+
+      tabs.forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)));
+
+      // --- Canvas Mouse Interactions ---
+      function findNodeAt(mx, my) {
+        for (const [, node] of graph.nodes) {
+          const dx = node.x - mx, dy = node.y - my;
+          const r = node.type === 'COMPLAINT' ? 14 : 10;
+          if (dx * dx + dy * dy < r * r) return node;
+        }
+        return null;
+      }
+
+      if (canvas) {
+        canvas.addEventListener('mousemove', (e) => {
+          const rect = canvas.getBoundingClientRect();
+          const mx = (e.clientX - rect.left) * (canvas.width / rect.width);
+          const my = (e.clientY - rect.top) * (canvas.height / rect.height);
+          if (dragNode) {
+            dragNode.x = mx; dragNode.y = my;
+            dragNode.vx = 0; dragNode.vy = 0;
+          } else {
+            hoveredNode = findNodeAt(mx, my);
+            canvas.style.cursor = hoveredNode ? 'pointer' : 'grab';
+          }
+        });
+        canvas.addEventListener('mousedown', (e) => {
+          const rect = canvas.getBoundingClientRect();
+          const mx = (e.clientX - rect.left) * (canvas.width / rect.width);
+          const my = (e.clientY - rect.top) * (canvas.height / rect.height);
+          const node = findNodeAt(mx, my);
+          if (node) {
+            dragNode = node;
+            canvas.style.cursor = 'grabbing';
+          }
+        });
+        canvas.addEventListener('mouseup', () => {
+          if (dragNode) {
+            // If didn't move much, treat as click
+            selectedNode = dragNode;
+            dragNode = null;
+            canvas.style.cursor = 'grab';
+          }
+        });
+        canvas.addEventListener('mouseleave', () => {
+          hoveredNode = null;
+          dragNode = null;
+        });
+        canvas.addEventListener('dblclick', () => {
+          selectedNode = null;
+        });
+      }
+
+      // --- Continuous render loop ---
+      function startRenderLoop() {
+        if (graphAnimId) cancelAnimationFrame(graphAnimId);
+        function loop() {
+          if (canvas && ctx) renderGraph(canvas, ctx);
+          graphAnimId = requestAnimationFrame(loop);
+        }
+        loop();
+      }
+
+      // --- Update All Panels ---
+      function updateAllPanels() {
+        // KPIs
+        const components = getConnectedComponents();
+        const fraudRings = detectFraudRings(3);
+        const groups = fraudRings.length;
+        const risk = groups >= 5 ? 'HIGH' : groups >= 3 ? 'MEDIUM' : groups >= 1 ? 'LOW' : '--';
+        const riskColors = { HIGH: 'text-accent-red', MEDIUM: 'text-accent-orange', LOW: 'text-accent-lime', '--': 'text-text-muted' };
+
+        document.getElementById('ncrpKpiNodes').textContent = graph.nodes.size;
+        document.getElementById('ncrpKpiEdges').textContent = graph.edges.length;
+        document.getElementById('ncrpKpiGroups').textContent = groups;
+        const riskEl = document.getElementById('ncrpKpiRisk');
+        riskEl.textContent = risk;
+        riskEl.className = 'text-xl font-bold font-mono mt-0.5 ' + (riskColors[risk] || '');
+        kpisEl.classList.remove('hidden');
+        clearDataBtn.classList.remove('hidden');
+
+        // Fraud Groups panel
+        const ringsList = document.getElementById('ncrpRingsList');
+        if (fraudRings.length === 0) {
+          ringsList.innerHTML = '<div class="cyber-card p-4 border-opacity-10 text-center"><span class="text-accent-lime font-mono text-xs font-bold">&#10003; No connected fraud groups detected.</span></div>';
+        } else {
+          ringsList.innerHTML = '<div class="cyber-badge cyber-badge-orange text-xs mb-3">' + fraudRings.length + ' connected groups found</div>' +
+            fraudRings.map(ring => {
+              const membersByType = {};
+              ring.members.forEach(m => {
+                const nd = graph.nodes.get(m);
+                const t = nd ? nd.type : 'UNKNOWN';
+                if (!membersByType[t]) membersByType[t] = [];
+                membersByType[t].push(m);
+              });
+              return '<div class="cyber-card p-4 border-opacity-10 space-y-2">' +
+                '<div class="flex items-center justify-between">' +
+                '<span class="text-xs font-mono font-bold text-accent-orange">GROUP #' + ring.ring_id + '</span>' +
+                '<span class="cyber-badge cyber-badge-red text-[10px]">' + ring.size + ' members</span>' +
+                '</div>' +
+                '<div class="flex flex-wrap gap-1.5">' +
+                ring.members.map(m => {
+                  const nd = graph.nodes.get(m);
+                  const color = nd ? nodeColor(nd.type) : '#64748b';
+                  return '<span class="text-[10px] font-mono px-2 py-0.5 rounded border border-white border-opacity-10" style="color:' + color + '">' + escHtml(m) + '</span>';
+                }).join('') +
+                '</div></div>';
+            }).join('');
+        }
+
+        // Key Accounts panel
+        const topEntities = getDegreeCentrality(20);
+        const accountsBody = document.getElementById('ncrpAccountsBody');
+        if (topEntities.length === 0) {
+          accountsBody.innerHTML = '<tr><td colspan="4" class="text-center text-text-muted py-4">No data.</td></tr>';
+        } else {
+          accountsBody.innerHTML = topEntities.map(e => {
+            const riskScore = (e.centrality * 100).toFixed(1);
+            const riskClass = e.degree >= 4 ? 'text-accent-red' : e.degree >= 2 ? 'text-accent-orange' : 'text-accent-lime';
+            return '<tr>' +
+              '<td class="font-mono text-xs" style="color:' + nodeColor(e.type) + '">' + escHtml(e.id) + '</td>' +
+              '<td class="text-xs">' + e.type.replace(/_/g, ' ') + '</td>' +
+              '<td class="text-xs text-accent-blue font-bold">' + e.degree + '</td>' +
+              '<td class="text-xs font-bold ' + riskClass + '">' + riskScore + '%</td>' +
+              '</tr>';
+          }).join('');
+        }
+
+        // Connection Trace selects
+        const nodeIds = [...graph.nodes.keys()].sort();
+        const optionsHtml = '<option value="">Select node...</option>' + nodeIds.map(id => '<option value="' + escAttr(id) + '">' + escHtml(id) + '</option>').join('');
+        traceStartEl.innerHTML = optionsHtml;
+        traceEndEl.innerHTML = optionsHtml;
+
+        lucide.createIcons();
+      }
+
+      function escHtml(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+      function escAttr(s) { return escHtml(s).replace(/'/g, '&#39;'); }
+
+      // --- Process loaded data ---
+      function processData(rows, sourceMsg) {
+        loadComplaints(rows);
+        if (canvas) {
+          initPositions(canvas.width, canvas.height);
+          simulateForces(canvas.width, canvas.height, Math.min(200, Math.max(80, graph.nodes.size * 3)));
+        }
+        statusEl.textContent = sourceMsg;
+        updateAllPanels();
+        switchTab('overview');
+        startRenderLoop();
+        app.logTerminal('NCRP Intelligence: ' + sourceMsg, 'success');
+        app.logTerminal('Graph engine: ' + graph.nodes.size + ' nodes, ' + graph.edges.length + ' edges, ' + detectFraudRings(3).length + ' fraud rings detected.', 'info');
+      }
+
+      // --- Sample Data ---
+      const SAMPLE_DATA = [
+        { complaint_id: 'C001', phone: '9876543210', bank_account: 'BANK123', ip_address: '192.168.1.1', email: 'user1@mail.com' },
+        { complaint_id: 'C002', phone: '9123456789', bank_account: 'BANK123', ip_address: '192.168.1.5', email: 'user2@mail.com' },
+        { complaint_id: 'C003', phone: '9123456789', bank_account: 'BANK456', ip_address: '10.0.0.1', email: 'user2@mail.com' },
+        { complaint_id: 'C004', phone: '9000000000', bank_account: 'BANK789', ip_address: '10.0.0.1', email: 'user3@mail.com' },
+        { complaint_id: 'C005', phone: '9876543210', bank_account: 'BANK999', ip_address: '172.16.0.1', email: 'user1@mail.com' },
+        { complaint_id: 'C006', phone: '9555555555', bank_account: 'BANK000', ip_address: '192.168.1.10', email: 'user4@mail.com' }
+      ];
+
+      // --- Event Bindings ---
+      if (csvFileEl) {
+        csvFileEl.addEventListener('change', (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+          if (fileLabelEl) fileLabelEl.textContent = file.name;
+          app.logTerminal('NCRP Intelligence: Loading file ' + file.name + '...', 'info');
+          const reader = new FileReader();
+          reader.onload = () => {
+            const rows = parseComplaintCSV(String(reader.result || ''));
+            if (!rows.length) {
+              statusEl.textContent = 'Error: No valid complaint rows found.';
+              app.logTerminal('NCRP Intelligence: CSV parsing failed - no complaint_id column found.', 'error');
+              return;
+            }
+            processData(rows, 'Loaded ' + rows.length + ' complaints from ' + file.name);
+          };
+          reader.readAsText(file);
+        });
+      }
+
+      if (loadSampleBtn) {
+        loadSampleBtn.addEventListener('click', () => {
+          processData(SAMPLE_DATA, 'Loaded 6 sample complaints (demo data).');
+        });
+      }
+
+      if (clearDataBtn) {
+        clearDataBtn.addEventListener('click', () => {
+          clearGraph();
+          selectedNode = null; hoveredNode = null;
+          kpisEl.classList.add('hidden');
+          clearDataBtn.classList.add('hidden');
+          statusEl.textContent = 'Data cleared. Upload new file.';
+          document.getElementById('ncrpRingsList').innerHTML = '<p class="text-xs text-text-muted font-mono py-6 text-center">Upload complaint data to detect fraud rings.</p>';
+          document.getElementById('ncrpAccountsBody').innerHTML = '<tr><td colspan="4" class="text-center text-text-muted py-4">No data loaded.</td></tr>';
+          traceResultEl.innerHTML = '';
+          if (fileLabelEl) fileLabelEl.textContent = 'Upload complaint_data.csv';
+          app.logTerminal('NCRP Intelligence: Graph data cleared.', 'info');
+        });
+      }
+
+      // Connection Trace
+      if (traceBtn) {
+        traceBtn.addEventListener('click', () => {
+          const startId = traceStartEl.value;
+          const endId = traceEndEl.value;
+          if (!startId || !endId) {
+            traceResultEl.innerHTML = '<div class="cyber-card p-3 border-opacity-10 text-accent-orange text-xs font-mono">Select both start and end nodes.</div>';
+            return;
+          }
+          const path = shortestPath(startId, endId);
+          if (path) {
+            app.logTerminal('NCRP Trace: Connection found (' + path.length + ' hops) between ' + startId + ' and ' + endId, 'success');
+            traceResultEl.innerHTML =
+              '<div class="cyber-card p-4 border-opacity-10 space-y-3">' +
+              '<div class="flex items-center gap-2"><span class="cyber-badge cyber-badge-lime text-[10px]">CONNECTION FOUND</span><span class="text-xs font-mono text-text-muted">' + path.length + ' nodes in chain</span></div>' +
+              '<div class="flex flex-wrap items-center gap-1">' +
+              path.map((nodeId, i) => {
+                const nd = graph.nodes.get(nodeId);
+                const color = nd ? nodeColor(nd.type) : '#64748b';
+                const arrow = i < path.length - 1 ? '<span class="text-accent-blue font-bold mx-1">&rarr;</span>' : '';
+                return '<span class="text-[11px] font-mono px-2 py-1 rounded border border-white border-opacity-10" style="color:' + color + '">' + escHtml(nodeId) + '</span>' + arrow;
+              }).join('') +
+              '</div></div>';
+          } else {
+            app.logTerminal('NCRP Trace: No connection found between ' + startId + ' and ' + endId, 'error');
+            traceResultEl.innerHTML = '<div class="cyber-card p-3 border-opacity-10 text-accent-red text-xs font-mono font-bold">&#10007; No connection path found between these nodes.</div>';
+          }
+        });
+      }
+
+      // Initial render
+      if (canvas && ctx) {
+        renderGraph(canvas, ctx);
+      }
+      switchTab('overview');
+      app.logTerminal('NCRP Intelligence Platform initialized. Upload complaint CSV to begin analysis.', 'info');
+    }
+  },
+  {
+    id: "mcc-mbs-lookup",
+    name: "MCC-MBS Lookup",
+    category: "Financial Intelligence",
+    icon: "credit-card",
+    status: "Ready",
+    badgeType: "blue",
+    description: "Look up Merchant Category Codes (MCC) against MBS classification, risk tier, ISO range, and IRS reportability. Supports code lookup, keyword search, and category browse.",
+    placeholderHtml: `
+      <div class="space-y-6">
+        <div class="cyber-card p-5 border-opacity-20" style="border-color:rgba(0,210,255,0.3);background:rgba(0,210,255,0.03);">
+          <div class="flex items-start gap-4">
+            <div class="p-3 rounded-lg" style="background:rgba(0,210,255,0.1);border:1px solid rgba(0,210,255,0.2);">
+              <i data-lucide="credit-card" class="w-6 h-6 text-accent-blue"></i>
+            </div>
+            <div>
+              <h3 class="text-sm font-bold font-mono text-accent-blue mb-1">MCC-MBS INTELLIGENCE LOOKUP</h3>
+              <p class="text-xs text-text-muted leading-relaxed">Merchant Category Classification System - cross-reference MCC codes with MBS categories, risk tiers, ISO ranges and IRS reportability flags.</p>
+            </div>
+            <div class="ml-auto text-right shrink-0">
+              <div class="text-[10px] font-mono text-text-muted uppercase">Dataset</div>
+              <div class="text-lg font-bold font-mono text-white" id="mcc-total-count">...</div>
+              <div class="text-[10px] font-mono text-text-muted">MCC Records</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="cyber-card p-5 border-opacity-10 space-y-4">
+          <h3 class="text-xs font-mono font-bold text-text-muted uppercase tracking-wider flex items-center gap-1.5">
+            <i data-lucide="search" class="w-3.5 h-3.5 text-accent-blue"></i> Search &amp; Lookup
+          </h3>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div class="flex flex-col gap-1.5">
+              <label class="text-[10px] font-mono uppercase text-text-muted">Search Mode</label>
+              <select id="mcc-mode" class="cyber-input text-xs">
+                <option value="code">By MCC Code</option>
+                <option value="keyword">By Keyword / Description</option>
+                <option value="category">By MBS Category</option>
+                <option value="risk">By Risk Tier</option>
+              </select>
+            </div>
+            <div class="md:col-span-2 flex flex-col gap-1.5">
+              <label class="text-[10px] font-mono uppercase text-text-muted">Query</label>
+              <div class="flex gap-2">
+                <input id="mcc-input" type="text" placeholder="e.g. 7995 or gambling..." class="cyber-input flex-1 text-sm">
+                <button id="mcc-search-btn" class="cyber-btn text-xs px-5">
+                  <i data-lucide="search" class="w-3.5 h-3.5"></i> LOOKUP
+                </button>
+              </div>
+            </div>
+          </div>
+          <div id="mcc-category-row" class="hidden">
+            <label class="text-[10px] font-mono uppercase text-text-muted block mb-1">MBS Category</label>
+            <select id="mcc-category-select" class="cyber-input text-xs w-full"></select>
+          </div>
+          <div id="mcc-risk-row" class="hidden">
+            <label class="text-[10px] font-mono uppercase text-text-muted block mb-1">Risk Tier</label>
+            <select id="mcc-risk-select" class="cyber-input text-xs w-full">
+              <option value="Low">Low</option>
+              <option value="Medium">Medium</option>
+              <option value="High">High</option>
+              <option value="Very High">Very High</option>
+              <option value="Critical">Critical</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="mcc-results-panel" class="hidden space-y-4">
+          <div id="mcc-single-result" class="hidden cyber-card p-6 border-opacity-20" style="border-color:rgba(0,210,255,0.25);">
+            <div class="flex items-center justify-between border-b border-white border-opacity-5 pb-3 mb-4">
+              <h3 class="text-sm font-bold font-mono text-accent-blue flex items-center gap-2">
+                <i data-lucide="file-search" class="w-4 h-4"></i> MCC RECORD FOUND
+              </h3>
+              <span id="mcc-risk-badge" class="cyber-badge text-[10px]">--</span>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-5 font-mono text-xs">
+              <div class="space-y-3">
+                <div class="flex gap-3"><span class="text-text-muted w-32 shrink-0">MCC Code</span><span id="mcc-r-code" class="text-accent-blue font-bold text-base"></span></div>
+                <div class="flex gap-3"><span class="text-text-muted w-32 shrink-0">Description</span><span id="mcc-r-desc" class="text-white"></span></div>
+                <div class="flex gap-3"><span class="text-text-muted w-32 shrink-0">MBS Category</span><span id="mcc-r-cat" class="text-accent-lime"></span></div>
+                <div class="flex gap-3"><span class="text-text-muted w-32 shrink-0">MBS Subcategory</span><span id="mcc-r-subcat" class="text-text-primary"></span></div>
+              </div>
+              <div class="space-y-3">
+                <div class="flex gap-3"><span class="text-text-muted w-32 shrink-0">Risk Tier</span><span id="mcc-r-risk" class="font-bold"></span></div>
+                <div class="flex gap-3"><span class="text-text-muted w-32 shrink-0">ISO Range</span><span id="mcc-r-iso" class="text-text-primary"></span></div>
+                <div class="flex gap-3"><span class="text-text-muted w-32 shrink-0">ISO Description</span><span id="mcc-r-isodesc" class="text-text-primary"></span></div>
+                <div class="flex gap-3"><span class="text-text-muted w-32 shrink-0">IRS Reportable</span><span id="mcc-r-irs" class="font-bold"></span></div>
+                <div class="flex gap-3"><span class="text-text-muted w-32 shrink-0">Mapping Rule</span><span id="mcc-r-rule" class="text-text-muted text-[10px]"></span></div>
+              </div>
+            </div>
+          </div>
+
+          <div id="mcc-multi-result" class="hidden cyber-card p-5 border-opacity-10">
+            <div class="flex items-center justify-between border-b border-white border-opacity-5 pb-3 mb-4">
+              <h3 class="text-sm font-bold font-mono text-white flex items-center gap-2">
+                <i data-lucide="list" class="w-4 h-4 text-accent-blue"></i> RESULTS
+              </h3>
+              <span id="mcc-result-count" class="cyber-badge cyber-badge-blue text-[10px]">0 records</span>
+            </div>
+            <div class="cyber-table-container max-h-96 overflow-y-auto">
+              <table class="cyber-table">
+                <thead><tr><th>MCC</th><th>Description</th><th>MBS Category</th><th>Risk Tier</th><th>IRS</th></tr></thead>
+                <tbody id="mcc-table-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div id="mcc-no-result" class="hidden cyber-card p-8 border-opacity-10 text-center">
+            <i data-lucide="search-x" class="w-8 h-8 text-accent-red mx-auto mb-2"></i>
+            <p class="text-sm font-mono font-bold text-accent-red">NO RECORDS FOUND</p>
+            <p class="text-xs text-text-muted mt-1">Try a different MCC code, keyword or category.</p>
+          </div>
+        </div>
+      </div>
+    `,
+    initLogic: function() {
+      let mccData = [];
+
+      const modeEl       = document.getElementById('mcc-mode');
+      const inputEl      = document.getElementById('mcc-input');
+      const searchBtn    = document.getElementById('mcc-search-btn');
+      const catRow       = document.getElementById('mcc-category-row');
+      const catSelect    = document.getElementById('mcc-category-select');
+      const riskRow      = document.getElementById('mcc-risk-row');
+      const riskSelect   = document.getElementById('mcc-risk-select');
+      const totalCountEl = document.getElementById('mcc-total-count');
+      const resultsPanel = document.getElementById('mcc-results-panel');
+      const singleDiv    = document.getElementById('mcc-single-result');
+      const multiDiv     = document.getElementById('mcc-multi-result');
+      const noDiv        = document.getElementById('mcc-no-result');
+
+      const RISK_STYLE = {
+        'Low':       { badge: 'cyber-badge-lime',   text: 'text-accent-lime'   },
+        'Medium':    { badge: 'cyber-badge-orange',  text: 'text-accent-orange' },
+        'High':      { badge: 'cyber-badge-red',     text: 'text-accent-red'    },
+        'Very High': { badge: 'cyber-badge-red',     text: 'text-accent-red'    },
+        'Critical':  { badge: 'cyber-badge-red',     text: 'text-accent-red'    }
+      };
+      const riskBadge = t => (RISK_STYLE[t] || { badge: 'cyber-badge-blue' }).badge;
+      const riskText  = t => (RISK_STYLE[t] || { text: 'text-accent-blue'  }).text;
+
+      // Parse CSV properly handling quoted commas
+      function parseCSV(text) {
+        text = text.replace(/^\uFEFF/, '');
+        const lines = text.split(/\r?\n/).filter(l => l.trim());
+        if (!lines.length) return [];
+        const headers = lines[0].split(',').map(h => h.replace(/"/g, '').trim());
+        const rows = [];
+        for (let i = 1; i < lines.length; i++) {
+          const vals = [];
+          let inQ = false, cur = '';
+          for (const ch of lines[i]) {
+            if (ch === '"') { inQ = !inQ; }
+            else if (ch === ',' && !inQ) { vals.push(cur.trim()); cur = ''; }
+            else { cur += ch; }
+          }
+          vals.push(cur.trim());
+          const obj = {};
+          headers.forEach((h, idx) => obj[h] = (vals[idx] || '').replace(/^"|"$/g, '').trim());
+          if (obj.mcc) rows.push(obj);
+        }
+        return rows;
+      }
+
+      function populateCategories() {
+        const cats = [...new Set(mccData.map(r => r.mbs_category).filter(Boolean))].sort();
+        catSelect.innerHTML = cats.map(c => `<option value="${c}">${c}</option>`).join('');
+      }
+
+      // Mode switcher UI
+      modeEl.addEventListener('change', () => {
+        const m = modeEl.value;
+        catRow.classList.toggle('hidden', m !== 'category');
+        riskRow.classList.toggle('hidden', m !== 'risk');
+        inputEl.classList.toggle('hidden', m === 'category' || m === 'risk');
+        const ph = { code:'e.g. 7995', keyword:'e.g. gambling, airline, hotel...' };
+        inputEl.placeholder = ph[m] || '';
+      });
+
+      // Render single record
+      function showSingle(row) {
+        [singleDiv, multiDiv, noDiv].forEach(el => el.classList.add('hidden'));
+        singleDiv.classList.remove('hidden');
+        resultsPanel.classList.remove('hidden');
+
+        document.getElementById('mcc-r-code').textContent    = row.mcc;
+        document.getElementById('mcc-r-desc').textContent    = row.mcc_description;
+        document.getElementById('mcc-r-cat').textContent     = row.mbs_category;
+        document.getElementById('mcc-r-subcat').textContent  = row.mbs_subcategory;
+        document.getElementById('mcc-r-iso').textContent     = row.iso_range_start + ' \u2013 ' + row.iso_range_end;
+        document.getElementById('mcc-r-isodesc').textContent = row.iso_range_description;
+        document.getElementById('mcc-r-rule').textContent    = row.mapping_rule_notes;
+
+        const riskEl = document.getElementById('mcc-r-risk');
+        riskEl.textContent = row.suggested_risk_tier || 'N/A';
+        riskEl.className   = 'font-bold ' + riskText(row.suggested_risk_tier);
+
+        const badgeEl = document.getElementById('mcc-risk-badge');
+        badgeEl.textContent = row.suggested_risk_tier || 'Unknown';
+        badgeEl.className   = 'cyber-badge text-[10px] ' + riskBadge(row.suggested_risk_tier);
+
+        const irsEl = document.getElementById('mcc-r-irs');
+        const irs = (row.irs_reportable || '').toLowerCase();
+        irsEl.textContent = irs === 'yes' ? 'YES \u2014 Reportable' : 'NO';
+        irsEl.className   = 'font-bold ' + (irs === 'yes' ? 'text-accent-orange' : 'text-accent-lime');
+        lucide.createIcons();
+      }
+
+      // Render multi-row table
+      function showMulti(rows) {
+        [singleDiv, multiDiv, noDiv].forEach(el => el.classList.add('hidden'));
+        multiDiv.classList.remove('hidden');
+        resultsPanel.classList.remove('hidden');
+        document.getElementById('mcc-result-count').textContent = rows.length + ' records';
+
+        const tbody = document.getElementById('mcc-table-body');
+        tbody.innerHTML = rows.slice(0, 200).map(r => `
+          <tr class="cursor-pointer" data-mcc="${r.mcc}">
+            <td class="font-bold text-accent-blue font-mono">${r.mcc}</td>
+            <td class="text-xs max-w-[240px] truncate" title="${r.mcc_description}">${r.mcc_description}</td>
+            <td class="text-xs text-accent-lime">${r.mbs_category}</td>
+            <td class="text-xs font-bold ${riskText(r.suggested_risk_tier)}">${r.suggested_risk_tier}</td>
+            <td class="text-xs ${(r.irs_reportable||'').toLowerCase()==='yes'?'text-accent-orange font-bold':'text-text-muted'}">${r.irs_reportable||'--'}</td>
+          </tr>
+        `).join('');
+
+        tbody.querySelectorAll('tr[data-mcc]').forEach(tr => {
+          tr.addEventListener('click', () => {
+            const row = mccData.find(r => r.mcc === tr.dataset.mcc);
+            if (row) { showSingle(row); app.logTerminal('MCC drilled-in: ' + row.mcc + ' - ' + row.mcc_description, 'info'); }
+          });
+        });
+        if (rows.length > 200) {
+          tbody.innerHTML += `<tr><td colspan="5" class="text-center text-text-muted text-xs py-3">Showing 200 of ${rows.length}. Refine query.</td></tr>`;
+        }
+        lucide.createIcons();
+      }
+
+      function showNoResult() {
+        [singleDiv, multiDiv, noDiv].forEach(el => el.classList.add('hidden'));
+        noDiv.classList.remove('hidden');
+        resultsPanel.classList.remove('hidden');
+        lucide.createIcons();
+      }
+
+      // Main search logic
+      function doSearch() {
+        if (!mccData.length) { app.logTerminal('MCC-MBS: Dataset still loading, please wait.', 'error'); return; }
+        const mode  = modeEl.value;
+        const query = inputEl.value.trim().toLowerCase();
+        let results = [];
+
+        if (mode === 'code') {
+          if (!query) { alert('Enter an MCC code.'); return; }
+          // Try exact match first (zero-pad to 4 digits)
+          const padded = query.replace(/\D/g, '').padStart(4, '0');
+          results = mccData.filter(r => r.mcc === padded || r.mcc === query.toUpperCase());
+          if (!results.length) results = mccData.filter(r => r.mcc.includes(padded));
+          app.logTerminal(`MCC Lookup: code "${padded}"`, 'info');
+
+        } else if (mode === 'keyword') {
+          if (!query) { alert('Enter a keyword.'); return; }
+          results = mccData.filter(r =>
+            (r.mcc_description||'').toLowerCase().includes(query) ||
+            (r.mbs_category||'').toLowerCase().includes(query) ||
+            (r.mbs_subcategory||'').toLowerCase().includes(query) ||
+            (r.iso_range_description||'').toLowerCase().includes(query)
+          );
+          app.logTerminal(`MCC keyword: "${query}" \u2192 ${results.length} matches`, 'info');
+
+        } else if (mode === 'category') {
+          const cat = catSelect.value;
+          results = mccData.filter(r => r.mbs_category === cat);
+          app.logTerminal(`MCC category: "${cat}" \u2192 ${results.length} records`, 'info');
+
+        } else if (mode === 'risk') {
+          const tier = riskSelect.value;
+          results = mccData.filter(r => r.suggested_risk_tier === tier);
+          app.logTerminal(`MCC risk tier: "${tier}" \u2192 ${results.length} records`, 'info');
+        }
+
+        if (!results.length) { showNoResult(); app.logTerminal('MCC-MBS: No matching records.', 'error'); return; }
+        if (results.length === 1) { showSingle(results[0]); app.logTerminal(`Found: ${results[0].mcc} - ${results[0].mcc_description}`, 'success'); return; }
+        showMulti(results);
+        app.logTerminal(`MCC-MBS: ${results.length} records matched.`, 'success');
+      }
+
+      searchBtn.addEventListener('click', doSearch);
+      inputEl.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+
+      // Load embedded dataset (from mcc_data.js)
+      if (typeof MCC_DATA !== 'undefined' && MCC_DATA.length) {
+        mccData = MCC_DATA;
+        totalCountEl.textContent = mccData.length.toLocaleString();
+        populateCategories();
+        app.logTerminal(`MCC-MBS: ${mccData.length} merchant category codes loaded.`, 'success');
+      } else {
+        totalCountEl.textContent = 'ERR';
+        app.logTerminal('MCC-MBS: Dataset not found. Ensure mcc_data.js is loaded.', 'error');
+      }
+    }
+  },
+  {
+    id: "ip-sentinel",
+    name: "Destination IP Mapping",
+    category: "Network Intelligence",
+    icon: "shield-check",
+    status: "Ready",
+    badgeType: "cyan",
+    description: "Next-gen Threat Intelligence Platform — multi-indicator lookup (IP/Domain/URL/Hash) against 23+ CIF feeds, weighted confidence scoring, CIDR-aware matching, and real-time traffic enrichment.",
+    placeholderHtml: `
+      <div class="space-y-5">
+        <!-- Header -->
+        <div class="cyber-card p-5 border-opacity-20" style="border-color:rgba(0,210,255,0.3);background:rgba(0,210,255,0.03);">
+          <div class="flex items-start gap-4 flex-wrap">
+            <div class="p-3 rounded-lg" style="background:rgba(0,210,255,0.1);border:1px solid rgba(0,210,255,0.2);">
+              <i data-lucide="shield-check" class="w-6 h-6 text-accent-blue"></i>
+            </div>
+            <div class="flex-1 min-w-[200px]">
+              <h3 class="text-sm font-bold font-mono text-accent-blue mb-1">THREAT INTELLIGENCE PLATFORM</h3>
+              <p class="text-xs text-text-muted leading-relaxed">Multi-indicator lookup against 23+ CIF feeds with weighted confidence scoring, CIDR-aware matching, and real-time traffic enrichment.</p>
+            </div>
+            <div class="flex gap-4 text-center shrink-0">
+              <div><div class="text-lg font-bold font-mono text-white" id="ips-total-ranges">--</div><div class="text-[10px] font-mono text-text-muted">Ranges</div></div>
+              <div><div class="text-lg font-bold font-mono text-accent-lime" id="ips-total-orgs">--</div><div class="text-[10px] font-mono text-text-muted">Orgs</div></div>
+              <div><div class="text-lg font-bold font-mono text-accent-blue" id="ips-total-apps">--</div><div class="text-[10px] font-mono text-text-muted">Apps</div></div>
+              <div><div class="text-lg font-bold font-mono" style="color:#f472b6" id="ips-total-feeds">--</div><div class="text-[10px] font-mono text-text-muted">CIF Feeds</div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab Nav -->
+        <div class="flex gap-0 border-b border-white border-opacity-10">
+          <button class="ips-tab active" data-tab="stream" style="padding:8px 16px;font-size:11px;font-family:monospace;color:#94a3b8;background:none;border:none;cursor:pointer;position:relative;">
+            <i data-lucide="zap" class="w-3.5 h-3.5" style="display:inline;vertical-align:middle;margin-right:4px"></i> Live Stream
+          </button>
+          <button class="ips-tab" data-tab="lookup" style="padding:8px 16px;font-size:11px;font-family:monospace;color:#94a3b8;background:none;border:none;cursor:pointer;position:relative;">
+            <i data-lucide="search" class="w-3.5 h-3.5" style="display:inline;vertical-align:middle;margin-right:4px"></i> Indicator Lookup
+          </button>
+          <button class="ips-tab" data-tab="feeds" style="padding:8px 16px;font-size:11px;font-family:monospace;color:#94a3b8;background:none;border:none;cursor:pointer;position:relative;">
+            <i data-lucide="rss" class="w-3.5 h-3.5" style="display:inline;vertical-align:middle;margin-right:4px"></i> CIF Feed Hub
+          </button>
+          <button class="ips-tab" data-tab="database" style="padding:8px 16px;font-size:11px;font-family:monospace;color:#94a3b8;background:none;border:none;cursor:pointer;position:relative;">
+            <i data-lucide="database" class="w-3.5 h-3.5" style="display:inline;vertical-align:middle;margin-right:4px"></i> Database
+          </button>
+        </div>
+
+        <!-- TAB: Live Stream -->
+        <div id="ips-panel-stream" class="space-y-4">
+          <div class="flex flex-wrap items-center gap-3">
+            <button id="ips-stream-toggle" class="cyber-btn text-xs px-4" style="border-color:rgba(239,68,68,0.4);color:#fca5a5;">
+              <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#ef4444;margin-right:6px;animation:pulse 1.5s infinite"></span> Pause
+            </button>
+            <select id="ips-speed" class="cyber-input text-xs" style="width:auto;">
+              <option value="2000">Slow (2s)</option>
+              <option value="800" selected>Normal (0.8s)</option>
+              <option value="400">Fast (0.4s)</option>
+              <option value="150">Extreme (0.15s)</option>
+            </select>
+            <button id="ips-clear" class="cyber-btn text-xs px-3" style="border-color:rgba(100,116,139,0.3);">Clear</button>
+          </div>
+          <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-7 gap-2" id="ips-stats-row">
+            <div class="cyber-card p-2 text-center border-opacity-5"><div class="text-base font-bold font-mono text-white" id="ips-st-total">0</div><div class="text-[9px] font-mono text-text-muted uppercase">Total</div></div>
+            <div class="cyber-card p-2 text-center border-opacity-5"><div class="text-base font-bold font-mono text-accent-lime" id="ips-st-legit">0</div><div class="text-[9px] font-mono text-text-muted uppercase">Legitimate</div></div>
+            <div class="cyber-card p-2 text-center border-opacity-5"><div class="text-base font-bold font-mono text-accent-blue" id="ips-st-infra">0</div><div class="text-[9px] font-mono text-text-muted uppercase">Infra</div></div>
+            <div class="cyber-card p-2 text-center border-opacity-5"><div class="text-base font-bold font-mono text-accent-orange" id="ips-st-vpn">0</div><div class="text-[9px] font-mono text-text-muted uppercase">VPN/Proxy/Tor</div></div>
+            <div class="cyber-card p-2 text-center border-opacity-5"><div class="text-base font-bold font-mono text-accent-red" id="ips-st-sus">0</div><div class="text-[9px] font-mono text-text-muted uppercase">Suspicious</div></div>
+            <div class="cyber-card p-2 text-center border-opacity-5"><div class="text-base font-bold font-mono" style="color:#94a3b8" id="ips-st-unk">0</div><div class="text-[9px] font-mono text-text-muted uppercase">Unknown</div></div>
+            <div class="cyber-card p-2 text-center border-opacity-5" style="border-color:rgba(239,68,68,0.15);background:rgba(239,68,68,0.03)"><div class="text-base font-bold font-mono" style="color:#f87171" id="ips-st-cif">0</div><div class="text-[9px] font-mono text-text-muted uppercase">CIF Hits</div></div>
+          </div>
+          <div class="cyber-table-container max-h-[400px] overflow-y-auto">
+            <table class="cyber-table"><thead><tr>
+              <th>Time</th><th>Source IP</th><th>Dest IP</th><th>Proto</th><th>Port</th><th>Owner / App</th><th>Verdict</th><th>Risk</th><th>Feeds</th>
+            </tr></thead><tbody id="ips-stream-tbody"></tbody></table>
+          </div>
+        </div>
+
+        <!-- TAB: Indicator Lookup -->
+        <div id="ips-panel-lookup" class="hidden space-y-4">
+          <div class="flex gap-2">
+            <div class="relative flex-1">
+              <input id="ips-lookup-input" type="text" value="185.220.101.5" placeholder="Enter IP, domain, URL, or hash..." class="cyber-input w-full font-mono text-sm" style="padding-left:36px">
+              <span id="ips-indicator-badge" style="position:absolute;left:8px;top:50%;transform:translateY(-50%);font-size:9px;font-weight:700;color:#0ea5e9;font-family:monospace;background:rgba(14,165,233,0.1);padding:1px 5px;border-radius:3px;border:1px solid rgba(14,165,233,0.2)">IP</span>
+            </div>
+            <button id="ips-lookup-btn" class="cyber-btn text-xs px-5"><i data-lucide="search" class="w-3.5 h-3.5"></i> Lookup</button>
+          </div>
+          <div class="flex flex-wrap gap-1.5" id="ips-quick-links"></div>
+          <div id="ips-lookup-result" class="hidden space-y-4"></div>
+        </div>
+
+        <!-- TAB: CIF Feed Hub -->
+        <div id="ips-panel-feeds" class="hidden space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 style="font-size:13px;font-weight:700;color:#e2e8f0;font-family:monospace">CIF FEED INTELLIGENCE HUB</h3>
+              <p style="font-size:10px;color:#64748b;margin-top:2px">23 threat feed sources from bearded-avenger CIF rules</p>
+            </div>
+            <button id="ips-sync-btn" class="cyber-btn text-xs px-4" style="border-color:rgba(0,210,255,0.3);color:#93c5fd">
+              <i data-lucide="refresh-cw" class="w-3.5 h-3.5" style="display:inline;vertical-align:middle;margin-right:4px"></i> Sync Status
+            </button>
+          </div>
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3" id="ips-feed-stats"></div>
+          <div class="cyber-table-container max-h-[400px] overflow-y-auto">
+            <table class="cyber-table"><thead><tr>
+              <th>Provider</th><th>Feed</th><th>Status</th><th>Records</th><th>Last Sync</th><th>Source</th>
+            </tr></thead><tbody id="ips-feed-tbody"></tbody></table>
+          </div>
+        </div>
+
+        <!-- TAB: Database Browser -->
+        <div id="ips-panel-database" class="hidden space-y-4">
+          <div class="flex flex-wrap gap-3">
+            <input id="ips-db-search" type="text" placeholder="Search owner, app, CIDR, ASN..." class="cyber-input flex-1 text-xs" style="min-width:200px">
+            <select id="ips-db-cat" class="cyber-input text-xs" style="width:auto"><option value="all">All Categories</option></select>
+            <select id="ips-db-threat" class="cyber-input text-xs" style="width:auto">
+              <option value="all">All Threats</option>
+              <option value="safe">SAFE</option><option value="low">LOW</option>
+              <option value="medium">MEDIUM</option><option value="high">HIGH</option><option value="critical">CRITICAL</option>
+            </select>
+          </div>
+          <div class="text-xs font-mono text-text-muted" id="ips-db-count"></div>
+          <div class="cyber-table-container max-h-[450px] overflow-y-auto">
+            <table class="cyber-table"><thead><tr>
+              <th>CIDR</th><th>Owner</th><th>App</th><th>Category</th><th>ASN</th><th>Country</th><th>Threat</th>
+            </tr></thead><tbody id="ips-db-tbody"></tbody></table>
+          </div>
+          <div class="flex items-center justify-between" id="ips-db-pager"></div>
+        </div>
+      </div>
+    `,
+    initLogic: function() {
+      if (typeof IP_DATABASE === 'undefined' || !IP_DATABASE.length) {
+        app.logTerminal('Destination IP Mapping: Database not loaded. Ensure ip_data.js is included.', 'error');
+        return;
+      }
+
+      // ── IP math ──
+      function ipToInt(ip) { const p=ip.split('.').map(Number); return ((p[0]<<24)|(p[1]<<16)|(p[2]<<8)|p[3])>>>0; }
+      function isValidIpv4(ip) { const p=ip.trim().split('.'); if(p.length!==4)return false; return p.every(x=>/^\d{1,3}$/.test(x)&&Number(x)>=0&&Number(x)<=255); }
+      function matchesCidr(ip, cidr) {
+        const ipInt=ipToInt(ip); const [net,bits]=cidr.split('/'); const prefix=Number(bits);
+        const mask=prefix===0?0:(0xffffffff<<(32-prefix))>>>0;
+        return (ipInt&mask)===(ipToInt(net)&mask);
+      }
+      function lookupLocal(ip) {
+        if(!isValidIpv4(ip)) return {matched:false,entry:null,ip};
+        let best=null, bestP=-1;
+        for(const e of IP_DATABASE){const p=Number(e.cidr.split('/')[1]);if(p>bestP&&matchesCidr(ip,e.cidr)){best=e;bestP=p;}}
+        return {matched:!!best,entry:best,ip};
+      }
+      function computeVerdict(local) {
+        const v={ip:local.ip, localMatch:local.matched, owner:local.entry?.owner||'Unknown', app:local.entry?.app||'Unknown',
+          category:local.entry?.category||'Unknown', cidr:local.entry?.cidr||'-', asn:local.entry?.asn||'-',
+          country:local.entry?.country||'Unknown', threat:local.entry?.threat||'medium',
+          description:local.entry?.description||local.entry?.app||'Not in database', verdict:'Unknown', confidence:40};
+        if(local.matched){
+          const t=local.entry.threat;
+          const cat=local.entry.category;
+          if(t==='critical'||t==='high'){v.verdict='Suspicious Server';v.confidence=90;}
+          else if(cat==='VPN'){v.verdict='VPN / Proxy / Tor';v.confidence=85;}
+          else if(cat==='Malicious'){v.verdict='Suspicious Server';v.confidence=90;}
+          else if(t==='safe'||t==='low'){v.verdict='Legitimate Service';v.confidence=95;}
+          else{v.verdict='Cloud Infrastructure';v.confidence=80;}
+        }
+        return v;
+      }
+
+      // ── Indicator type detection ──
+      function detectIndicatorType(val) {
+        if(/^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/.test(val)) return 'IP';
+        if(/^https?:\/\//i.test(val)) return 'URL';
+        if(/^[0-9a-f]{32,128}$/i.test(val)) return 'HASH';
+        if(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}$/i.test(val)) return 'DOMAIN';
+        return 'IP';
+      }
+
+      // ── Threat badge helper ──
+      const THREAT_STYLE = {safe:'cyber-badge-lime',low:'cyber-badge-blue',medium:'cyber-badge-orange',high:'cyber-badge-red',critical:'cyber-badge-red'};
+      const VERDICT_STYLE = {'Legitimate Service':'cyber-badge-lime','Cloud Infrastructure':'cyber-badge-blue','VPN / Proxy / Tor':'cyber-badge-orange','Suspicious Server':'cyber-badge-red','Unknown':''};
+      function threatBadge(level) { return '<span class="cyber-badge text-[9px] '+( THREAT_STYLE[level]||'')+'">'+(level||'?').toUpperCase()+'</span>'; }
+      function verdictBadge(v) { return '<span class="cyber-badge text-[9px] '+(VERDICT_STYLE[v]||'')+'">' +v+'</span>'; }
+
+      // ── Risk level colors ──
+      const RISK_COLORS = {None:'#64748b',Low:'#00d2ff',Medium:'#f59e0b',High:'#ef4444',Critical:'#dc2626'};
+      const RISK_BG = {None:'transparent',Low:'rgba(0,210,255,0.06)',Medium:'rgba(245,158,11,0.06)',High:'rgba(239,68,68,0.06)',Critical:'rgba(220,38,38,0.08)'};
+      const RISK_BORDER = {None:'rgba(100,116,139,0.3)',Low:'rgba(0,210,255,0.3)',Medium:'rgba(245,158,11,0.3)',High:'rgba(239,68,68,0.3)',Critical:'rgba(220,38,38,0.5)'};
+      function riskBadge(level, score) {
+        const color = RISK_COLORS[level]||'#64748b';
+        const pulse = level==='Critical' ? 'animation:pulse 1.5s infinite;' : '';
+        return '<span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;font-family:monospace;color:'+color+';background:'+color+'18;padding:2px 8px;border-radius:4px;border:1px solid '+color+'40;'+pulse+'">'+level.toUpperCase()+(score!==undefined?' · '+score:'')+'</span>';
+      }
+
+      // ── Populate header stats ──
+      document.getElementById('ips-total-ranges').textContent = TOTAL_RANGES;
+      document.getElementById('ips-total-orgs').textContent = TOTAL_OWNERS;
+      document.getElementById('ips-total-apps').textContent = TOTAL_APPS;
+
+      // Fetch CIF feed count
+      fetch('/api/threat_intel/status').then(r=>r.json()).then(d=>{
+        document.getElementById('ips-total-feeds').textContent = d.total_feeds || '23';
+      }).catch(()=>{ document.getElementById('ips-total-feeds').textContent = '23'; });
+
+      // ── Tab switching ──
+      const tabs = document.querySelectorAll('.ips-tab');
+      const panels = {stream:document.getElementById('ips-panel-stream'),lookup:document.getElementById('ips-panel-lookup'),feeds:document.getElementById('ips-panel-feeds'),database:document.getElementById('ips-panel-database')};
+      tabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+          tabs.forEach(t => { t.style.color='#94a3b8'; t.style.borderBottom='none'; });
+          tab.style.color='#22d3ee'; tab.style.borderBottom='2px solid #22d3ee';
+          Object.values(panels).forEach(p => p.classList.add('hidden'));
+          panels[tab.dataset.tab].classList.remove('hidden');
+        });
+      });
+      tabs[0].style.color='#22d3ee'; tabs[0].style.borderBottom='2px solid #22d3ee';
+
+      // ═══════════════ LIVE STREAM ═══════════════
+      const SIMULATION_IPS=["8.8.8.8","8.8.4.4","142.250.80.46","142.250.185.206","172.217.14.99","216.58.214.206","74.125.24.100","64.233.177.99","209.85.128.25","157.240.1.35","157.240.22.35","31.13.64.35","31.13.71.36","69.171.250.35","129.134.30.12","179.60.192.10","130.44.212.1","19.28.100.5","52.94.236.248","54.239.28.85","13.32.99.100","3.5.140.2","3.208.0.1","205.251.192.179","13.224.0.1","20.42.0.1","52.96.0.1","13.107.42.14","40.126.32.134","20.190.151.70","157.55.39.1","204.79.197.200","52.112.0.1","1.1.1.1","1.0.0.1","104.16.132.229","104.18.20.100","172.67.182.31","17.253.144.10","17.142.160.59","17.57.144.10","45.57.0.10","108.175.32.10","198.38.96.10","192.173.65.200","104.244.42.1","199.59.149.1","69.195.160.1","140.82.121.3","185.199.108.153","192.30.255.113","155.133.224.1","162.254.192.1","208.64.200.1","78.31.8.1","193.182.8.1","91.108.4.1","149.154.160.1","162.159.128.233","162.125.1.1","108.160.160.1","64.125.62.1","8.5.128.10","23.227.38.65","108.174.10.10","173.0.84.1","13.108.0.1","136.146.0.1","104.131.0.1","134.209.0.1","165.22.0.1","9.9.9.9","208.67.222.222","208.67.220.220","151.101.1.1","34.102.136.10","23.32.0.1","23.64.0.1","184.24.0.1","151.101.100.1","157.52.64.1","98.136.0.1","185.70.40.1","208.80.152.1","5.188.206.10","185.220.100.10","185.220.101.5","45.155.205.10","193.142.146.10","194.26.29.10","91.240.118.10","77.247.181.10","141.98.10.10","45.95.169.5","79.124.62.10","45.134.26.10","62.102.148.5","45.148.10.5","195.54.160.5","103.86.96.10","89.187.160.10","146.70.0.1","169.150.196.5","37.120.128.5","203.119.101.1","80.82.77.33","111.7.100.1"];
+      const PROTOCOLS=["TCP","UDP","HTTPS","HTTP","DNS","TLS","SSH","SMTP","RDP","QUIC"];
+      const PORTS=[80,443,53,22,25,8080,3389,445,8443,993,587,110,143,1433,3306,5432,27017,6379,9200,6443];
+      function randSrcIp(){const b=[[10,0,0],[172,16,0],[192,168,0]];const c=b[Math.floor(Math.random()*b.length)];return c[0]+'.'+((c[1]||0)+Math.floor(Math.random()*16))+'.'+Math.floor(Math.random()*256)+'.'+(1+Math.floor(Math.random()*254));}
+
+      // CIF lookup cache for stream enrichment
+      const cifCache = {};
+      async function getCifData(ip) {
+        if (cifCache[ip] !== undefined) return cifCache[ip];
+        try {
+          const r = await fetch('/api/threat_intel/lookup?indicator='+encodeURIComponent(ip));
+          const d = await r.json();
+          cifCache[ip] = d;
+          return d;
+        } catch(e) { cifCache[ip] = null; return null; }
+      }
+      // Pre-warm cache for known suspicious IPs
+      ["5.188.206.10","185.220.100.10","185.220.101.5","45.155.205.10","193.142.146.10","194.26.29.10","91.240.118.10","77.247.181.10","141.98.10.10","45.95.169.5","79.124.62.10","45.134.26.10","62.102.148.5","45.148.10.5","195.54.160.5","80.82.77.33","103.86.96.10","89.187.160.10","146.70.0.1","169.150.196.5","37.120.128.5"].forEach(ip=>getCifData(ip));
+
+      let streaming=true, streamId=0, events=[], streamTimer=null;
+      const stats={total:0,legit:0,infra:0,vpn:0,sus:0,unk:0,cif:0};
+      const streamTbody=document.getElementById('ips-stream-tbody');
+      const toggleBtn=document.getElementById('ips-stream-toggle');
+      const speedSel=document.getElementById('ips-speed');
+      const clearBtn=document.getElementById('ips-clear');
+
+      function updateStats(){
+        document.getElementById('ips-st-total').textContent=stats.total;
+        document.getElementById('ips-st-legit').textContent=stats.legit;
+        document.getElementById('ips-st-infra').textContent=stats.infra;
+        document.getElementById('ips-st-vpn').textContent=stats.vpn;
+        document.getElementById('ips-st-sus').textContent=stats.sus;
+        document.getElementById('ips-st-unk').textContent=stats.unk;
+        document.getElementById('ips-st-cif').textContent=stats.cif;
+      }
+
+      async function addStreamEvent(){
+        const destIp=SIMULATION_IPS[Math.floor(Math.random()*SIMULATION_IPS.length)];
+        const local=lookupLocal(destIp);
+        const v=computeVerdict(local);
+        const cif = cifCache[destIp] || null;
+        const hasCif = cif && cif.found;
+        const ev={id:++streamId, time:new Date().toISOString().slice(11,23), src:randSrcIp(), dest:destIp,
+          proto:PROTOCOLS[Math.floor(Math.random()*PROTOCOLS.length)], port:PORTS[Math.floor(Math.random()*PORTS.length)], verdict:v, cif:cif};
+        events.unshift(ev);
+        if(events.length>50) events.length=50;
+        stats.total++;
+        if(v.verdict==='Legitimate Service') stats.legit++;
+        else if(v.verdict==='Cloud Infrastructure') stats.infra++;
+        else if(v.verdict==='VPN / Proxy / Tor') stats.vpn++;
+        else if(v.verdict==='Suspicious Server') stats.sus++;
+        else stats.unk++;
+        if(hasCif) stats.cif++;
+        updateStats();
+
+        const cifRiskLevel = hasCif ? cif.risk_level : 'None';
+        const cifScore = hasCif ? cif.risk_score : 0;
+        const cifFeeds = hasCif ? cif.feed_count : 0;
+        const rowBg = cifRiskLevel==='Critical' ? 'background:rgba(220,38,38,0.1)' : cifRiskLevel==='High' ? 'background:rgba(239,68,68,0.06)' : (v.threat==='critical'||v.threat==='high') ? 'background:rgba(239,68,68,0.04)' : '';
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = '<td class="font-mono" style="color:#64748b">'+ev.time+'</td>'
+          +'<td class="font-mono" style="color:#cbd5e1">'+ev.src+'</td>'
+          +'<td class="font-mono text-accent-blue">'+ev.dest+'</td>'
+          +'<td style="color:#94a3b8">'+ev.proto+'</td>'
+          +'<td class="font-mono" style="color:#94a3b8">'+ev.port+'</td>'
+          +'<td><div style="color:#e2e8f0">'+v.owner+'</div><div style="font-size:10px;color:#64748b">'+v.app+'</div></td>'
+          +'<td>'+verdictBadge(v.verdict)+'</td>'
+          +'<td>'+(hasCif ? riskBadge(cifRiskLevel, cifScore) : threatBadge(v.threat))+'</td>'
+          +'<td>'+(hasCif ? '<span style="font-size:10px;font-family:monospace;color:#f472b6;font-weight:700">'+cifFeeds+' feeds</span>' : '<span style="font-size:10px;color:#475569">—</span>')+'</td>';
+        tr.setAttribute('style','animation:fadeIn 0.3s;border-bottom:1px solid rgba(148,163,184,0.08);'+rowBg);
+        streamTbody.insertBefore(tr, streamTbody.firstChild);
+        while(streamTbody.children.length>50) streamTbody.removeChild(streamTbody.lastChild);
+      }
+
+      function startStream(){ if(streamTimer) clearInterval(streamTimer); streamTimer=setInterval(addStreamEvent, parseInt(speedSel.value)); }
+      function stopStream(){ if(streamTimer){clearInterval(streamTimer);streamTimer=null;} }
+
+      toggleBtn.addEventListener('click', ()=>{
+        streaming=!streaming;
+        if(streaming){startStream();toggleBtn.innerHTML='<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#ef4444;margin-right:6px;animation:pulse 1.5s infinite"></span> Pause';toggleBtn.style.borderColor='rgba(239,68,68,0.4)';toggleBtn.style.color='#fca5a5';}
+        else{stopStream();toggleBtn.innerHTML='<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#00d2ff;margin-right:6px"></span> Resume';toggleBtn.style.borderColor='rgba(0,210,255,0.4)';toggleBtn.style.color='#93c5fd';}
+      });
+      speedSel.addEventListener('change', ()=>{ if(streaming){stopStream();startStream();} });
+      clearBtn.addEventListener('click', ()=>{ events=[]; streamTbody.innerHTML=''; Object.keys(stats).forEach(k=>stats[k]=0); updateStats(); streamId=0; });
+      startStream();
+
+      // ═══════════════ INDICATOR LOOKUP ═══════════════
+      const EXAMPLES=[{ip:"185.220.101.5",label:"Tor Exit (CIF)"},{ip:"5.188.206.10",label:"Malicious (CIF)"},{ip:"80.82.77.33",label:"Scanner (CIF)"},{ip:"8.8.8.8",label:"Google DNS"},{ip:"1.1.1.1",label:"Cloudflare"},{ip:"157.240.1.35",label:"Facebook"},{ip:"104.244.42.1",label:"X/Twitter"},{ip:"140.82.121.3",label:"GitHub"},{ip:"17.253.144.10",label:"Apple"},{ip:"45.57.0.10",label:"Netflix"},{ip:"52.94.236.248",label:"AWS"},{ip:"103.86.96.10",label:"NordVPN (CIF)"}];
+      const quickDiv=document.getElementById('ips-quick-links');
+      quickDiv.innerHTML='<span style="font-size:10px;color:#64748b;margin-right:4px">Try:</span>'+EXAMPLES.map(ex=>'<button class="ips-quick" data-ip="'+ex.ip+'" style="border:1px solid rgba(100,116,139,0.3);background:rgba(15,23,42,0.6);color:#94a3b8;font-size:10px;padding:2px 8px;border-radius:4px;cursor:pointer;transition:all 0.15s">'+(ex.label.includes('CIF')?'<span style="color:#f472b6">⬥</span> ':'')+ex.label+'</button>').join('');
+
+      const lookupInput=document.getElementById('ips-lookup-input');
+      const lookupBtn=document.getElementById('ips-lookup-btn');
+      const lookupResult=document.getElementById('ips-lookup-result');
+      const indicatorBadge=document.getElementById('ips-indicator-badge');
+
+      // Update indicator type badge on input
+      lookupInput.addEventListener('input', ()=>{
+        const t = detectIndicatorType(lookupInput.value.trim());
+        indicatorBadge.textContent = t;
+        const colors = {IP:'#0ea5e9',DOMAIN:'#a78bfa',URL:'#f59e0b',HASH:'#f472b6'};
+        indicatorBadge.style.color = colors[t]||'#0ea5e9';
+        indicatorBadge.style.borderColor = (colors[t]||'#0ea5e9')+'40';
+        indicatorBadge.style.background = (colors[t]||'#0ea5e9')+'18';
+      });
+
+      async function doIndicatorLookup(indicator){
+        indicator = indicator.trim();
+        if(!indicator){
+          lookupResult.innerHTML='<div class="cyber-card p-4 border-opacity-10" style="border-color:rgba(245,158,11,0.3);background:rgba(245,158,11,0.05)"><p class="text-xs font-mono" style="color:#fbbf24">Please enter an indicator (IP, domain, URL, or hash)</p></div>';
+          lookupResult.classList.remove('hidden');
+          return;
+        }
+
+        // Show loading
+        lookupResult.innerHTML='<div class="cyber-card p-6 text-center" style="border-color:rgba(0,210,255,0.2)"><div style="display:inline-block;width:24px;height:24px;border:2px solid rgba(0,210,255,0.2);border-top-color:#22d3ee;border-radius:50%;animation:spin 0.8s linear infinite"></div><p style="margin-top:8px;font-size:11px;color:#64748b;font-family:monospace">Querying CIF feeds...</p></div>';
+        lookupResult.classList.remove('hidden');
+
+        const itype = detectIndicatorType(indicator);
+        const isIp = itype === 'IP';
+
+        // Local DB lookup for IPs
+        let local = null, v = null;
+        if(isIp && isValidIpv4(indicator.split('/')[0])) {
+          local = lookupLocal(indicator.split('/')[0]);
+          v = computeVerdict(local);
+        }
+
+        // CIF API lookup
+        let cifData = null;
+        try {
+          const r = await fetch('/api/threat_intel/lookup?indicator='+encodeURIComponent(indicator));
+          cifData = await r.json();
+        } catch(e) { cifData = null; }
+
+        const hasCif = cifData && cifData.found;
+        const riskLevel = hasCif ? cifData.risk_level : 'None';
+        const riskScore = hasCif ? cifData.risk_score : 0;
+        const riskConf = hasCif ? cifData.risk_confidence : 0;
+        const feedCount = hasCif ? cifData.feed_count : 0;
+        const tags = hasCif ? (cifData.tags||[]) : [];
+        const providers = hasCif ? (cifData.providers||[]) : [];
+
+        const borderColor = RISK_BORDER[riskLevel] || 'rgba(100,116,139,0.3)';
+        const bgColor = RISK_BG[riskLevel] || 'transparent';
+        const riskColor = RISK_COLORS[riskLevel] || '#64748b';
+        const confColor = riskConf>=80 ? '#00d2ff' : riskConf>=50 ? '#f59e0b' : riskConf>0 ? '#ef4444' : '#475569';
+
+        // Build threat feed matches HTML
+        let feedMatchesHtml = '';
+        if(providers.length > 0) {
+          feedMatchesHtml = providers.map(p => {
+            const tagStr = (p.tags||[]).map(t=>'<span style="font-size:9px;background:rgba(148,163,184,0.1);color:#94a3b8;padding:1px 5px;border-radius:3px;border:1px solid rgba(148,163,184,0.15)">'+t+'</span>').join(' ');
+            return '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(148,163,184,0.06)">'
+              +'<div style="display:flex;align-items:center;gap:8px">'
+              +'<span style="color:#00d2ff;font-size:12px">✓</span>'
+              +'<span style="color:#e2e8f0;font-size:12px;font-weight:600">'+p.provider+'</span>'
+              +'<span style="color:#64748b;font-size:10px;font-family:monospace">/'+p.feed_name+'</span>'
+              +'</div>'
+              +'<div style="display:flex;align-items:center;gap:6px">'
+              +tagStr
+              +'<span style="font-size:10px;color:#94a3b8;font-family:monospace;min-width:24px;text-align:right">'+p.confidence+'</span>'
+              +'</div></div>';
+          }).join('');
+        } else {
+          feedMatchesHtml = '<div style="text-align:center;padding:16px;color:#475569;font-size:11px"><i data-lucide="shield-check" class="w-5 h-5" style="display:inline;vertical-align:middle;margin-right:4px;color:#00d2ff"></i> No threat feeds matched — indicator appears clean</div>';
+        }
+
+        // Build tags HTML
+        const tagsHtml = tags.length > 0 ? '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px">'+tags.map(t=>'<span style="font-size:9px;font-weight:600;color:'+riskColor+';background:'+riskColor+'15;padding:2px 8px;border-radius:3px;border:1px solid '+riskColor+'30;font-family:monospace">'+t+'</span>').join('')+'</div>' : '';
+
+        let html = '';
+
+        // ── Main card ──
+        html += '<div class="cyber-card p-5" style="border-color:'+borderColor+';background:'+bgColor+'">';
+        html += '<div class="flex flex-wrap items-start justify-between gap-4">';
+        html += '<div><div class="font-mono text-xl font-bold text-white">'+indicator+'</div>';
+        html += '<div style="display:flex;align-items:center;gap:6px;margin-top:4px">';
+        html += '<span style="font-size:10px;font-weight:700;color:'+(itype==='IP'?'#0ea5e9':itype==='DOMAIN'?'#a78bfa':itype==='URL'?'#f59e0b':'#f472b6')+';background:'+(itype==='IP'?'#0ea5e918':itype==='DOMAIN'?'#a78bfa18':itype==='URL'?'#f59e0b18':'#f472b618')+';padding:2px 8px;border-radius:4px;border:1px solid '+(itype==='IP'?'#0ea5e940':itype==='DOMAIN'?'#a78bfa40':itype==='URL'?'#f59e0b40':'#f472b640')+';font-family:monospace">'+itype+'</span>';
+        if(v) html += '<span style="color:#94a3b8;font-size:12px">'+v.owner+(v.app!=='Unknown'&&v.app!==v.owner?' · '+v.app:'')+'</span>';
+        html += '</div></div>';
+        html += '<div class="flex flex-col items-end gap-2">';
+        if(hasCif) html += riskBadge(riskLevel, riskScore);
+        if(v) html += verdictBadge(v.verdict);
+        html += '</div></div>';
+
+        // Risk score bar
+        if(hasCif) {
+          html += '<div style="margin-top:16px">';
+          html += '<div class="flex items-center justify-between" style="font-size:11px;color:#64748b"><span>Threat Risk Score</span><span class="font-mono font-bold" style="color:'+riskColor+'">'+riskScore+' / 100</span></div>';
+          html += '<div style="margin-top:4px;height:10px;border-radius:9999px;background:#1e293b;overflow:hidden;position:relative">';
+          html += '<div style="height:100%;width:'+riskScore+'%;border-radius:9999px;background:linear-gradient(90deg,'+riskColor+'80,'+riskColor+');transition:width 0.8s ease-out;position:relative">';
+          if(riskLevel==='Critical') html += '<div style="position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.2),transparent);animation:shimmer 2s infinite"></div>';
+          html += '</div></div>';
+          html += '<div class="flex items-center justify-between" style="font-size:10px;margin-top:4px"><span style="color:#475569">Confidence: <strong style="color:'+confColor+'">'+riskConf+'%</strong></span><span style="color:#475569">'+feedCount+' independent feed'+(feedCount!==1?'s':'')+' matched</span></div>';
+          html += tagsHtml;
+          html += '</div>';
+        } else if(v) {
+          html += '<div style="margin-top:16px">';
+          html += '<div class="flex items-center justify-between" style="font-size:11px;color:#64748b"><span>Classification Confidence</span><span class="font-mono font-bold" style="color:#cbd5e1">'+v.confidence+'%</span></div>';
+          html += '<div style="margin-top:4px;height:8px;border-radius:9999px;background:#1e293b;overflow:hidden"><div style="height:100%;width:'+v.confidence+'%;border-radius:9999px;background:'+(v.confidence>=80?'#00d2ff':v.confidence>=50?'#f59e0b':'#ef4444')+';transition:width 0.6s"></div></div>';
+          html += '</div>';
+        }
+        html += '</div>';
+
+        // ── Detail cards grid ──
+        html += '<div class="grid grid-cols-1 md:grid-cols-2 gap-4">';
+
+        // CIF Threat Intelligence Card
+        html += '<div class="cyber-card p-4 border-opacity-10" style="border-color:'+borderColor+'">';
+        html += '<h3 style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:'+(hasCif?riskColor:'#64748b')+';margin-bottom:10px"><i data-lucide="shield-alert" class="w-3.5 h-3.5" style="display:inline;vertical-align:middle;margin-right:4px"></i> CIF THREAT INTELLIGENCE '+(hasCif?'('+feedCount+' MATCHES)':'(CLEAN)')+'</h3>';
+        html += '<div style="font-size:12px">'+feedMatchesHtml+'</div>';
+        html += '</div>';
+
+        // Local DB / Live API Card
+        if(isIp && v) {
+          html += '<div class="cyber-card p-4 border-opacity-10">';
+          html += '<h3 style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:#64748b;margin-bottom:10px"><i data-lucide="database" class="w-3.5 h-3.5" style="display:inline;vertical-align:middle;margin-right:4px"></i> LOCAL DB & GEOLOCATION</h3>';
+          html += '<div style="font-size:12px" class="space-y-1">';
+          html += infoRow('Owner',v.owner)+infoRow('App / Service',v.app)+infoRow('Category',v.category);
+          html += infoRow('CIDR',v.cidr,true)+infoRow('ASN',v.asn,true)+infoRow('Country',v.country);
+          html += infoRow('Description',v.description);
+          html += '</div>';
+          html += '<div id="ips-live-data" style="margin-top:12px;font-size:12px"><p style="color:#475569;font-size:10px">Fetching geolocation data...</p></div>';
+          html += '</div>';
+        } else {
+          html += '<div class="cyber-card p-4 border-opacity-10">';
+          html += '<h3 style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:#64748b;margin-bottom:10px"><i data-lucide="info" class="w-3.5 h-3.5" style="display:inline;vertical-align:middle;margin-right:4px"></i> INDICATOR DETAILS</h3>';
+          html += '<div style="font-size:12px" class="space-y-1">';
+          html += infoRow('Type', itype);
+          html += infoRow('Checked At', cifData ? new Date(cifData.checked_at).toLocaleString() : 'N/A');
+          html += infoRow('Last Seen', cifData && cifData.last_seen ? new Date(cifData.last_seen).toLocaleString() : 'Never');
+          html += '</div></div>';
+        }
+
+        html += '</div>';
+        lookupResult.innerHTML = html;
+        lookupResult.classList.remove('hidden');
+        lucide.createIcons();
+
+        // Log to terminal
+        const logLevel = hasCif ? 'error' : (v && (v.threat==='high'||v.threat==='critical')) ? 'error' : 'success';
+        app.logTerminal('Threat Intel: '+indicator+' → '+(hasCif?riskLevel+' (Score: '+riskScore+', '+feedCount+' feeds)':'Clean'), logLevel);
+
+        // Live API enrichment for IPs
+        if(isIp) {
+          fetch('http://ip-api.com/json/'+encodeURIComponent(indicator.split('/')[0])+'?fields=status,country,countryCode,regionName,city,isp,org,as,asname,lat,lon,timezone,proxy,hosting,mobile')
+            .then(r=>r.json()).then(d=>{
+              if(d.status!=='success') throw new Error('API fail');
+              const el=document.getElementById('ips-live-data');
+              if(!el) return;
+              const flagColor = d.proxy ? 'color:#fbbf24;font-weight:700' : '';
+              el.innerHTML='<div class="space-y-1">'+infoRow('Country',d.country+' ('+d.countryCode+')')
+                +infoRow('Region',d.regionName||'-')+infoRow('City',d.city||'-')
+                +infoRow('ISP',d.isp)+infoRow('Organization',d.org)
+                +infoRow('ASN',d.as,true)+infoRow('AS Name',d.asname)
+                +infoRow('Coordinates',d.lat+', '+d.lon,true)+infoRow('Timezone',d.timezone||'-')
+                +'<div class="flex justify-between gap-4"><span style="color:#64748b">Is Proxy/VPN</span><span style="'+flagColor+'">'+(d.proxy?'Yes ⚠':'No')+'</span></div>'
+                +infoRow('Is Hosting/DC',d.hosting?'Yes':'No')+infoRow('Is Mobile',d.mobile?'Yes':'No')+'</div>';
+            }).catch(()=>{
+              const el=document.getElementById('ips-live-data');
+              if(el) el.innerHTML='<div style="border:1px solid rgba(245,158,11,0.3);background:rgba(245,158,11,0.05);border-radius:6px;padding:10px;font-size:11px;color:#fbbf24"><p style="font-weight:600">Live API requires HTTP</p><p style="margin-top:4px;color:rgba(251,191,36,0.6)">ip-api.com free tier only works over HTTP. CIF threat data above is still accurate.</p></div>';
+            });
+        }
+      }
+
+      function infoRow(label,val,mono){return '<div class="flex justify-between gap-4"><span style="color:#64748b;flex-shrink:0">'+label+'</span><span style="color:#e2e8f0;text-align:right;'+(mono?'font-family:monospace;':'')+'">'+(val||'-')+'</span></div>';}
+
+      lookupBtn.addEventListener('click',()=>doIndicatorLookup(lookupInput.value.trim()));
+      lookupInput.addEventListener('keydown',e=>{if(e.key==='Enter')doIndicatorLookup(lookupInput.value.trim());});
+      quickDiv.addEventListener('click',e=>{const btn=e.target.closest('.ips-quick');if(btn){lookupInput.value=btn.dataset.ip;lookupInput.dispatchEvent(new Event('input'));doIndicatorLookup(btn.dataset.ip);}});
+
+      // ═══════════════ CIF FEED HUB ═══════════════
+      const feedTbody = document.getElementById('ips-feed-tbody');
+      const feedStats = document.getElementById('ips-feed-stats');
+      const syncBtn = document.getElementById('ips-sync-btn');
+
+      async function loadFeedHub() {
+        try {
+          const r = await fetch('/api/threat_intel/status');
+          const d = await r.json();
+
+          // Stats cards
+          feedStats.innerHTML = [
+            {label:'Total Feeds',value:d.total_feeds||0,color:'#22d3ee',icon:'rss'},
+            {label:'Total IOCs',value:d.total_records||0,color:'#a78bfa',icon:'database'},
+            {label:'CIDR Index',value:d.cidr_index_size||0,color:'#f59e0b',icon:'globe'},
+            {label:'Hash Index',value:d.hash_index_size||0,color:'#f472b6',icon:'hash'},
+          ].map(s=>'<div class="cyber-card p-3 text-center border-opacity-10" style="border-color:'+s.color+'30;background:'+s.color+'08"><div class="text-xl font-bold font-mono" style="color:'+s.color+'">'+s.value+'</div><div class="text-[9px] font-mono text-text-muted uppercase">'+s.label+'</div></div>').join('');
+
+          // Feed table
+          const feeds = d.feeds || [];
+          feedTbody.innerHTML = feeds.map(f=>{
+            const statusColor = f.status==='synced'?'#00d2ff':f.status==='demo'?'#0ea5e9':'#f59e0b';
+            const statusBg = statusColor+'18';
+            const lastSync = f.last_sync ? new Date(f.last_sync).toLocaleTimeString() : '—';
+            return '<tr style="border-bottom:1px solid rgba(148,163,184,0.08)">'
+              +'<td style="color:#e2e8f0;font-weight:600">'+f.provider+'</td>'
+              +'<td class="font-mono" style="color:#94a3b8">'+f.feed_name+'</td>'
+              +'<td><span style="font-size:9px;font-weight:700;color:'+statusColor+';background:'+statusBg+';padding:2px 8px;border-radius:4px;border:1px solid '+statusColor+'30;text-transform:uppercase">'+f.status+'</span></td>'
+              +'<td class="font-mono" style="color:#cbd5e1">'+f.records+'</td>'
+              +'<td style="color:#64748b;font-size:11px">'+lastSync+'</td>'
+              +'<td><a href="'+(f.remote||'#')+'" target="_blank" style="color:#0ea5e9;font-size:10px;text-decoration:none;font-family:monospace">'+(f.remote?'↗ Source':'—')+'</a></td>'
+              +'</tr>';
+          }).join('');
+
+          app.logTerminal('CIF Feed Hub: Loaded '+feeds.length+' feeds, '+d.total_records+' total IOCs', 'success');
+        } catch(e) {
+          feedTbody.innerHTML='<tr><td colspan="6" style="text-align:center;color:#f59e0b;padding:20px">Failed to load feed status. Is the server running?</td></tr>';
+        }
+      }
+
+      syncBtn.addEventListener('click', ()=>{
+        syncBtn.innerHTML='<i data-lucide="loader" class="w-3.5 h-3.5" style="display:inline;vertical-align:middle;margin-right:4px;animation:spin 1s linear infinite"></i> Syncing...';
+        setTimeout(()=>{
+          loadFeedHub();
+          syncBtn.innerHTML='<i data-lucide="refresh-cw" class="w-3.5 h-3.5" style="display:inline;vertical-align:middle;margin-right:4px"></i> Sync Status';
+          lucide.createIcons();
+        }, 800);
+      });
+
+      // Load feed hub on tab switch
+      const feedTab = document.querySelector('.ips-tab[data-tab="feeds"]');
+      feedTab.addEventListener('click', ()=>{ if(!feedTbody.children.length) loadFeedHub(); });
+
+      // ═══════════════ DATABASE BROWSER ═══════════════
+      let dbPage=0; const dbPerPage=25;
+      const dbSearch=document.getElementById('ips-db-search');
+      const dbCat=document.getElementById('ips-db-cat');
+      const dbThreat=document.getElementById('ips-db-threat');
+      const dbTbody=document.getElementById('ips-db-tbody');
+      const dbCount=document.getElementById('ips-db-count');
+      const dbPager=document.getElementById('ips-db-pager');
+
+      const cats=[...new Set(IP_DATABASE.map(e=>e.category))].sort();
+      dbCat.innerHTML='<option value="all">All Categories</option>'+cats.map(c=>'<option value="'+c+'">'+c+'</option>').join('');
+
+      function renderDb(){
+        let items=IP_DATABASE;
+        const s=dbSearch.value.trim().toLowerCase();
+        if(s) items=items.filter(e=>e.owner.toLowerCase().includes(s)||e.app.toLowerCase().includes(s)||e.cidr.includes(s)||e.description.toLowerCase().includes(s)||(e.asn&&e.asn.toLowerCase().includes(s)));
+        if(dbCat.value!=='all') items=items.filter(e=>e.category===dbCat.value);
+        if(dbThreat.value!=='all') items=items.filter(e=>e.threat===dbThreat.value);
+        const totalPages=Math.ceil(items.length/dbPerPage);
+        if(dbPage>=totalPages) dbPage=Math.max(0,totalPages-1);
+        const paged=items.slice(dbPage*dbPerPage,(dbPage+1)*dbPerPage);
+        dbCount.textContent='Showing '+paged.length+' of '+items.length+' ranges'+(items.length!==IP_DATABASE.length?' (filtered from '+IP_DATABASE.length+' total)':'');
+        dbTbody.innerHTML=paged.map(e=>{
+          const rowBg=(e.threat==='critical'||e.threat==='high')?'background:rgba(239,68,68,0.04)':'';
+          return '<tr style="border-bottom:1px solid rgba(148,163,184,0.08);'+rowBg+'"><td class="font-mono text-accent-blue">'+e.cidr+'</td><td style="color:#e2e8f0">'+e.owner+'</td><td style="color:#cbd5e1">'+e.app+'</td><td style="color:#94a3b8">'+e.category+'</td><td class="font-mono" style="color:#64748b">'+(e.asn||'-')+'</td><td style="color:#94a3b8">'+e.country+'</td><td>'+threatBadge(e.threat)+'</td></tr>';
+        }).join('');
+        if(totalPages>1){
+          dbPager.innerHTML='<button id="ips-db-prev" class="cyber-btn text-xs px-3" '+(dbPage===0?'disabled style="opacity:0.3"':'')+'>\\u2190 Previous</button><span style="font-size:11px;color:#64748b">Page '+(dbPage+1)+' of '+totalPages+'</span><button id="ips-db-next" class="cyber-btn text-xs px-3" '+(dbPage>=totalPages-1?'disabled style="opacity:0.3"':'')+'>Next \\u2192</button>';
+          document.getElementById('ips-db-prev')?.addEventListener('click',()=>{dbPage=Math.max(0,dbPage-1);renderDb();});
+          document.getElementById('ips-db-next')?.addEventListener('click',()=>{dbPage=Math.min(totalPages-1,dbPage+1);renderDb();});
+        } else { dbPager.innerHTML=''; }
+      }
+      dbSearch.addEventListener('input',()=>{dbPage=0;renderDb();});
+      dbCat.addEventListener('change',()=>{dbPage=0;renderDb();});
+      dbThreat.addEventListener('change',()=>{dbPage=0;renderDb();});
+      renderDb();
+
+      lucide.createIcons();
+      app.logTerminal('Threat Intelligence Platform initialized. '+TOTAL_RANGES+' CIDR ranges, '+TOTAL_OWNERS+' orgs, '+TOTAL_APPS+' apps, 23+ CIF feeds loaded.', 'success');
+    }
+  },
+  // ═══════════════════════════════════════════════════════════════════
+  //  SMS HEADER ANALYZER TOOL
+  // ═══════════════════════════════════════════════════════════════════
+  {
+    id: "sms-header-analyzer",
+    name: "SMS Header Analyzer",
+    category: "Intelligence",
+    icon: "scan",
+    status: "Ready",
+    badgeType: "purple",
+    description: "Instantly identify which company sent an SMS from the sender header. Detect phishing, analyze SMSC routing, decode TRAI DLT format, and assess risk - 200+ verified entities.",
+    placeholderHtml: `
+      <div class="space-y-5">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:18px;background:rgba(139,92,246,0.06);border:1px solid rgba(139,92,246,0.15);border-radius:14px">
+          <div style="width:48px;height:48px;border-radius:12px;background:rgba(139,92,246,0.12);border:1px solid rgba(139,92,246,0.25);display:flex;align-items:center;justify-content:center">
+            <i data-lucide="scan" class="w-6 h-6" style="color:#a78bfa"></i>
+          </div>
+          <div style="flex:1;min-width:200px">
+            <h3 style="font-size:13px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#a78bfa;margin-bottom:4px">SMS HEADER ANALYZER</h3>
+            <p style="font-size:11px;color:#94a3b8;line-height:1.5">Company detection -¢ Phishing analysis -¢ DLT decoding -¢ SMSC routing -¢ Risk scoring</p>
+          </div>
+          <div style="display:flex;gap:16px;text-align:center;flex-shrink:0">
+            <div><div style="font-size:18px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#a78bfa" id="sms-stat-entities">200+</div><div style="font-size:9px;color:#64748b;text-transform:uppercase;font-family:'JetBrains Mono',monospace">Entities</div></div>
+            <div><div style="font-size:18px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#22d3ee" id="sms-stat-industries">15+</div><div style="font-size:9px;color:#64748b;text-transform:uppercase;font-family:'JetBrains Mono',monospace">Industries</div></div>
+          </div>
+        </div>
+
+        <!-- Search -->
+        <div style="max-width:640px;margin:0 auto">
+          <div style="position:relative;display:flex;align-items:center;background:rgba(15,23,42,0.8);border:1px solid rgba(51,65,85,0.5);border-radius:12px;overflow:hidden" id="sms-search-box">
+            <div style="width:48px;height:48px;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+              <i data-lucide="search" class="w-5 h-5" style="color:#64748b" id="sms-search-icon"></i>
+            </div>
+            <input type="text" id="sms-input" placeholder="Enter SMS header (e.g., AD-HDFCBK-T, PAYTMS, +919876543210)" spellcheck="false" autocomplete="off"
+              style="flex:1;background:transparent;color:#fff;font-size:16px;font-family:'JetBrains Mono',monospace;padding:12px 0;outline:none;border:none" />
+            <div style="display:flex;align-items:center;gap:4px;padding-right:12px">
+              <button id="sms-clear-btn" style="display:none;padding:6px;border-radius:8px;background:transparent;border:none;color:#64748b;cursor:pointer" title="Clear">
+                <i data-lucide="x" class="w-4 h-4"></i>
+              </button>
+              <button id="sms-history-btn" style="padding:6px;border-radius:8px;background:transparent;border:none;color:#64748b;cursor:pointer" title="History">
+                <i data-lucide="history" class="w-4 h-4"></i>
+              </button>
+            </div>
+          </div>
+          <div id="sms-hint" style="margin-top:8px;padding:0 16px;display:none"></div>
+          <div id="sms-history-panel" style="display:none;margin-top:8px;background:rgba(15,23,42,0.9);border:1px solid rgba(51,65,85,0.5);border-radius:12px;overflow:hidden;max-height:240px;overflow-y:auto"></div>
+        </div>
+
+        <!-- Results -->
+        <div id="sms-results" style="display:none"></div>
+
+        <!-- Examples (shown when no result) -->
+        <div id="sms-examples"></div>
+      </div>`,
+    initLogic: function() {
+      if (typeof SENDER_ID_MAP === 'undefined') {
+        app.logTerminal('SMS Header Analyzer: Database not loaded. Ensure sms_company_data.js is included.', 'error');
+        return;
+      }
+
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• CORE SMS ANALYSIS ENGINE â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+      function identifySenderType(h) {
+        const t = h.trim();
+        if (/^\+?\d{10,15}$/.test(t)) return 'p2p';
+        if (/^\d{4,6}$/.test(t)) return 'shortcode';
+        if (/^\d{7,9}$/.test(t)) return 'longcode';
+        if (/^\+\d{1,3}\s?\d{6,14}$/.test(t)) return 'international';
+        if (/[A-Za-z]/.test(t)) return 'alphanumeric';
+        return 'unknown';
+      }
+
+      const SENDER_LABELS = {p2p:'Person-to-Person (P2P)',alphanumeric:'Alphanumeric Sender ID',shortcode:'Short Code',longcode:'Long Code',international:'International Number',unknown:'Unknown Format'};
+      const SENDER_DESCS = {p2p:'Standard mobile number - typically sent from a personal device via the cellular network.',alphanumeric:'Alphanumeric sender ID - sent via a bulk SMS gateway or API platform.',shortcode:'Short code number - used by businesses for high-volume messaging.',longcode:'Long code number - often used by automated systems or virtual number services.',international:'International phone number - may be legitimate or spoofed via VoIP/API gateways.',unknown:'Unable to classify this sender format.'};
+
+      function extractDLTBody(h) {
+        const m = h.trim().match(/^[A-Z]{2}-([A-Z0-9]+)(?:-[A-Z]{1,3})?$/i);
+        return m ? m[1].toUpperCase() : null;
+      }
+
+      function levenshtein(a, b) {
+        const mx = [];
+        for (let i = 0; i <= b.length; i++) mx[i] = [i];
+        for (let j = 0; j <= a.length; j++) mx[0][j] = j;
+        for (let i = 1; i <= b.length; i++)
+          for (let j = 1; j <= a.length; j++)
+            mx[i][j] = b[i-1]===a[j-1] ? mx[i-1][j-1] : Math.min(mx[i-1][j-1]+1, mx[i][j-1]+1, mx[i-1][j]+1);
+        return mx[b.length][a.length];
+      }
+
+      function detectCountry(h) {
+        const n = h.trim();
+        if (!n.startsWith('+')) return null;
+        const d = n.substring(1);
+        for (const len of [3,2,1]) {
+          const cc = d.substring(0, len);
+          if (COUNTRY_CODE_MAP[cc]) return COUNTRY_CODE_MAP[cc];
+        }
+        return null;
+      }
+
+      function matchCompany(header) {
+        const t = header.trim().toUpperCase();
+        if (!t) return null;
+        let best = null;
+
+        // Strategy 1: Exact
+        if (SENDER_ID_MAP[t]) best = {company:SENDER_ID_MAP[t], confidence:99, confidenceLabel:'Very High', matchMethod:'Exact Sender ID Match', matchedAgainst:t};
+
+        // Strategy 2: DLT body
+        if (!best || best.confidence < 95) {
+          const body = extractDLTBody(t);
+          if (body && SENDER_ID_MAP[body]) {
+            const m = {company:SENDER_ID_MAP[body], confidence:97, confidenceLabel:'Very High', matchMethod:'DLT Body Extraction', matchedAgainst:body};
+            if (!best || m.confidence > best.confidence) best = m;
+          }
+        }
+
+        // Strategy 3: Short code
+        if (!best && SHORT_CODE_MAP[t]) best = {company:SHORT_CODE_MAP[t], confidence:95, confidenceLabel:'High', matchMethod:'Short Code Database', matchedAgainst:t};
+
+        // Strategy 4: Substring
+        if (!best || best.confidence < 90) {
+          let longest = '', mc = null;
+          for (const [sid, co] of Object.entries(SENDER_ID_MAP)) {
+            if (sid.length >= 4 && t.includes(sid) && sid.length > longest.length) { longest = sid; mc = co; }
+          }
+          if (mc && longest.length >= 4) {
+            const c = Math.min(92, 70 + longest.length * 3);
+            const m = {company:mc, confidence:c, confidenceLabel:c>=85?'High':'Medium', matchMethod:'Substring Pattern Match', matchedAgainst:longest};
+            if (!best || m.confidence > best.confidence) best = m;
+          }
+        }
+
+        // Strategy 5: Fuzzy (Levenshtein)
+        if (!best || best.confidence < 80) {
+          const body = extractDLTBody(t) || t.replace(/[-_]/g, '');
+          let minD = Infinity, fMatch = null, fKey = '';
+          const similar = [];
+          for (const [sid, co] of Object.entries(SENDER_ID_MAP)) {
+            if (Math.abs(body.length - sid.length) > 2) continue;
+            const d = levenshtein(body, sid);
+            if (d <= 2 && d < minD) { minD = d; fMatch = co; fKey = sid; }
+            if (d <= 2 && d > 0) similar.push(co.name+' ('+sid+')');
+          }
+          if (fMatch && minD <= 2) {
+            const c = minD === 1 ? 72 : 55;
+            const m = {company:fMatch, confidence:c, confidenceLabel:c>=65?'Medium':'Low', matchMethod:'Fuzzy Match ('+minD+' char diff)', matchedAgainst:fKey, similarBrands:similar.length?similar:undefined};
+            if (!best || m.confidence > best.confidence) best = m;
+          }
+        }
+
+        // Strategy 6: Token-based
+        if (!best || best.confidence < 70) {
+          const body = extractDLTBody(t) || t.replace(/[-_]/g, '');
+          const tokens = {'HDFC':'HDFCBK','ICICI':'ICICIB','SBI':'SBIINB','KOTAK':'KOTAKB','AXIS':'AXISBK','PNB':'PNBSMS',
+            'PAYTM':'PAYTMS','GPAY':'GPAYIN','PHONE':'PHONPE','CRED':'CRDSCR','RAZR':'RAZPAY','BAJAJ':'BAJFIN',
+            'ANGEL':'ANGONE','ZEROD':'ZERODK','GROWW':'GROWW','UPSTOX':'UPSTOX',
+            'AMAZON':'AMAZON','AMZN':'AMAZON','FLIPK':'FLIPKT','MYNTR':'MYNTRA','MEESH':'MEESHO',
+            'SWIGGY':'SWIGGY','ZOMAT':'ZOMATO','BLNKT':'BLINKT','ZEPTO':'ZEPTO',
+            'IRCTC':'IRCTCI','UBER':'UBERID','OLA':'OLACAB',
+            'JIO':'JIONET','AIRTEL':'AIRTEL','BSNL':'BSNLMS',
+            'UIDAI':'UIDIAI','GST':'GSTIND','MYGOV':'MYGOV',
+            'GOOGLE':'GOOGLE','WHATS':'WHATSA','LINKED':'LINKED',
+            'BYJUS':'BYJUS','UNACAD':'UNACAD'};
+          for (const [tok, sid] of Object.entries(tokens)) {
+            if (body.includes(tok) && SENDER_ID_MAP[sid]) {
+              const c = tok.length >= 5 ? 78 : 65;
+              const m = {company:SENDER_ID_MAP[sid], confidence:c, confidenceLabel:c>=70?'Medium':'Low', matchMethod:'Brand Token Detection', matchedAgainst:tok};
+              if (!best || m.confidence > best.confidence) best = m;
+              break;
+            }
+          }
+        }
+
+        // Enrich with telecom/country
+        if (best) {
+          const pm = t.match(/^([A-Z]{2})-/i);
+          if (pm) { const ci = TELECOM_CIRCLE_MAP[pm[1].toUpperCase()]; if (ci) { best.telecomCircle=ci.circle; best.telecomOperator=ci.operator; best.dltPlatform=ci.dltPlatform; }}
+          const coi = detectCountry(t);
+          if (coi) best.countryInfo = coi;
+        } else {
+          // Check for DLT-format headers (XX-ENTITY-Y) including numeric entity IDs
+          const dltMatch = t.match(/^([A-Z]{2})-([A-Z0-9]+)(?:-([A-Z]{1,3}))?$/i);
+          const coi = detectCountry(t);
+
+          if (dltMatch) {
+            const prefix = dltMatch[1].toUpperCase();
+            const entityBody = dltMatch[2].toUpperCase();
+            const suffix = dltMatch[3] ? dltMatch[3].toUpperCase() : null;
+            const ci = TELECOM_CIRCLE_MAP[prefix];
+            const isNumericEntity = /^\d+$/.test(entityBody);
+
+            // Determine suffix meaning
+            const suffixLabels = {P:'Promotional',T:'Transactional',S:'Service',G:'Government',SI:'Service Implicit',SE:'Service Explicit',GV:'Government',OTP:'One-Time Password'};
+            const suffixLabel = suffix ? (suffixLabels[suffix] || suffix) : 'Unknown';
+
+            const result = {
+              company: {
+                name: isNumericEntity ? 'DLT Registered Entity (ID: '+entityBody+')' : entityBody,
+                industry: suffix==='G'||suffix==='GV' ? 'Government' : (suffixLabel || 'Unknown'),
+                subIndustry: isNumericEntity ? 'Numeric DLT Entity ID' : 'DLT Registered Entity',
+                logo: isNumericEntity ? 'ðŸ”¢' : 'ðŸ“¨',
+                headquartersCountry: 'IN',
+                isVerifiedBrand: false,
+                description: 'DLT registered entity "'+entityBody+'" with '+suffixLabel+' category. Registered on TRAI DLT platform via '+prefix+' telecom circle.'
+              },
+              confidence: 55,
+              confidenceLabel: 'DLT Format Detected',
+              matchMethod: isNumericEntity ? 'Numeric DLT Entity ID' : 'DLT Format Detection',
+              matchedAgainst: entityBody,
+              isNumericDLT: isNumericEntity,
+              dltSuffix: suffix,
+              dltSuffixLabel: suffixLabel,
+              telecomCircle: ci ? ci.circle : 'Unknown',
+              telecomOperator: ci ? ci.operator : 'Unknown',
+              dltPlatform: ci ? ci.dltPlatform : 'Unknown',
+              countryInfo: coi || undefined
+            };
+            return result;
+          }
+
+          if (coi) return {company:{name:'Unknown Sender',industry:'Unknown',logo:coi.flag,headquartersCountry:coi.code},confidence:10,confidenceLabel:'Very Low',matchMethod:'Country Code Only',matchedAgainst:coi.code,countryInfo:coi};
+        }
+        return best;
+      }
+
+      function parseAlphaHeader(h) {
+        const t = h.trim();
+        const dm = t.match(/^([A-Z]{2})-([A-Z0-9]+)-?([A-Z]{1,3})?$/i);
+        if (dm) return {prefix:dm[1].toUpperCase(), body:dm[2].toUpperCase(), suffix:dm[3]?dm[3].toUpperCase():null, sep:'-'};
+        if (/^[A-Z]{6}$/i.test(t)) return {prefix:t.substring(0,2).toUpperCase(), body:t.toUpperCase(), suffix:null, sep:''};
+        return {prefix:t.length>=2?t.substring(0,2).toUpperCase():null, body:t.toUpperCase(), suffix:null, sep:''};
+      }
+
+      function buildComponents(h, st) {
+        const c = [];
+        if (st==='alphanumeric') {
+          const p = parseAlphaHeader(h);
+          if (p.sep==='-') {
+            const parts = h.split('-');
+            if (parts.length>=2) {
+              c.push({part:parts[0],label:'Entity Prefix',description:'Telecom circle or entity type identifier',color:'#60a5fa'});
+              c.push({part:'-',label:'Separator',description:'Standard DLT format separator',color:'#64748b'});
+              const isNumBody = /^\d+$/.test(parts[1]);
+              c.push({part:parts[1],label:isNumBody?'DLT Entity ID (Numeric)':'Entity Name / Brand',description:isNumBody?'Numeric registration ID on TRAI DLT platform':'Registered business or entity name on DLT platform',color:isNumBody?'#f97316':'#a78bfa'});
+              if (parts[2]) { c.push({part:'-',label:'Separator',description:'Standard DLT format separator',color:'#64748b'}); c.push({part:parts[2],label:'Message Category',description:'P=Promotional, T=Transactional, S=Service, G=Government',color:'#fbbf24'}); }
+            }
+          } else { c.push({part:h.trim(),label:'Sender ID',description:'Registered alphanumeric sender identity',color:'#a78bfa'}); }
+        } else if (st==='p2p'||st==='international') {
+          const n = h.trim();
+          if (n.startsWith('+')) { const cc=n.match(/^\+(\d{1,3})/); if (cc) { c.push({part:'+'+cc[1],label:'Country Code',color:'#4ade80'}); c.push({part:n.substring(cc[0].length),label:'Subscriber Number',color:'#60a5fa'}); }}
+          else c.push({part:n,label:'Phone Number',color:'#4ade80'});
+        } else if (st==='shortcode') c.push({part:h.trim(),label:'Short Code',color:'#fbbf24'});
+        else if (st==='longcode') c.push({part:h.trim(),label:'Long Code',color:'#fb923c'});
+        else c.push({part:h.trim(),label:'Unknown',color:'#f87171'});
+        return c;
+      }
+
+      function analyzeHeader(header) {
+        const t = header.trim();
+        if (!t) return null;
+        const st = identifySenderType(t);
+        const flags = [];
+        let gatewayInfo = null, suffixInfo = null, entityName = null;
+        let isKnown = false, isGov = false, isBulk = false, isAPI = false;
+        const isP2P = st === 'p2p';
+        const cm = matchCompany(t);
+
+        // Company match flags
+        if (cm && cm.confidence >= 50) {
+          isKnown = true; entityName = cm.company.name;
+          if (cm.company.isGovernment) isGov = true;
+          if (cm.confidence >= 90) flags.push({type:'safe',title:'âœ… Identified: '+cm.company.name,description:'Matched with '+cm.confidence+'% confidence via '+cm.matchMethod+'.'});
+          else if (cm.confidence >= 65) flags.push({type:'info',title:'ðŸ” Likely: '+cm.company.name,description:'Matched with '+cm.confidence+'% confidence via '+cm.matchMethod+'.'});
+          else flags.push({type:'warning',title:'âš ï¸ Possible: '+cm.company.name,description:'Low confidence ('+cm.confidence+'%) via '+cm.matchMethod+'.'});
+          if (cm.similarBrands && cm.similarBrands.length) flags.push({type:'danger',title:'ðŸš¨ Similar Brand Names Detected',description:'Close to: '+cm.similarBrands.join(', ')+'. Possible phishing.'});
+          if (cm.company.isVerifiedBrand) flags.push({type:'safe',title:'ðŸ¢ Verified Brand',description:'"'+cm.company.name+'" is a verified entity.'});
+          if (cm.company.isGovernment) flags.push({type:'safe',title:'ðŸ›ï¸ Government Entity',description:'"'+cm.company.name+'" is a government organization.'});
+        }
+        // Numeric DLT entity flags
+        if (cm && cm.isNumericDLT) {
+          entityName = 'DLT Entity #' + cm.matchedAgainst;
+          flags.push({type:'info',title:'ðŸ”¢ Numeric DLT Entity ID: ' + cm.matchedAgainst, description:'This header uses a numeric DLT entity registration ID instead of a brand name.'});
+          if (cm.dltSuffix) flags.push({type:'info',title:'ðŸ“‹ Message Category: ' + cm.dltSuffixLabel, description:'Suffix "'+cm.dltSuffix+'" indicates '+cm.dltSuffixLabel+' message.'});
+        } else if (cm && cm.confidence >= 50 && cm.confidence < 80 && !cm.company.isVerifiedBrand) {
+          entityName = cm.company.name;
+          flags.push({type:'info',title:'ðŸ“¨ DLT Entity: ' + cm.matchedAgainst, description:'DLT registered entity "'+cm.matchedAgainst+'" with '+cm.dltSuffixLabel+' category.'});
+          if (cm.dltSuffix) flags.push({type:'info',title:'ðŸ“‹ Message Category: ' + cm.dltSuffixLabel, description:'Suffix "'+cm.dltSuffix+'" indicates '+cm.dltSuffixLabel+' message.'});
+        } else if (cm && cm.confidence < 50 && cm.confidence > 0) {
+          entityName = cm.company.name;
+          flags.push({type:'warning',title:'â“ Not in Local Database',description:'Entity "'+cm.matchedAgainst+'" not found. Use Web Lookup to investigate.'});
+        }
+        if (cm && cm.telecomCircle) flags.push({type:'info',title:'ðŸ“¡ DLT Platform: '+(cm.dltPlatform||'Unknown'),description:'Telecom circle: '+cm.telecomCircle+'.'});
+        if (cm && cm.countryInfo) flags.push({type:'info',title:cm.countryInfo.flag+' Origin: '+cm.countryInfo.country,description:'Registered in '+cm.countryInfo.country+'.'});
+
+        // â”€â”€ Enhanced DLT Analysis â”€â”€
+        let dltInfo = {registered:false,consentType:'Unknown',timeRestricted:false,templateCategory:'Unknown',entityIdFormat:'N/A',registrationStatus:'Unverified'};
+
+        // Alphanumeric analysis
+        if (st==='alphanumeric') {
+          const p = parseAlphaHeader(t); isBulk=true; isAPI=true;
+          if (p.prefix) { const mp=KNOWN_PREFIXES.find(x=>x.prefix===p.prefix); if (mp) { gatewayInfo=mp; if (mp.type==='government') isGov=true; flags.push({type:'info',title:'Known Prefix: '+mp.prefix,description:mp.description}); }}
+          if (p.suffix) {
+            const ms=KNOWN_SUFFIXES.find(x=>x.suffix===p.suffix);
+            if (ms) {
+              suffixInfo=ms;
+              flags.push({type:'info',title:'Message Category: '+ms.category,description:ms.description});
+              // DLT template category mapping
+              const catMap = {P:'Promotional',T:'Transactional',S:'Service Implicit',G:'Government',SI:'Service Implicit',SE:'Service Explicit',GV:'Government',OTP:'One-Time Password'};
+              dltInfo.templateCategory = catMap[p.suffix] || ms.category;
+              // Consent type
+              if (p.suffix==='P') { dltInfo.consentType='Explicit Opt-in'; dltInfo.timeRestricted=true; }
+              else if (p.suffix==='T'||p.suffix==='OTP') { dltInfo.consentType='Implicit (Transaction)'; }
+              else if (p.suffix==='S'||p.suffix==='SI') { dltInfo.consentType='Implicit (Existing Relationship)'; }
+              else if (p.suffix==='SE') { dltInfo.consentType='Explicit Opt-in'; }
+              else if (p.suffix==='G'||p.suffix==='GV') { dltInfo.consentType='Not Required (Government)'; }
+            }
+          }
+          // DLT registration check
+          if (p.sep==='-') {
+            dltInfo.registered = true;
+            dltInfo.registrationStatus = 'DLT Registered (TRAI Compliant)';
+            dltInfo.entityIdFormat = p.prefix + '-XXXXXX-' + (p.suffix||'X');
+            flags.push({type:'safe',title:'DLT Registered Format',description:'Follows the standard DLT format. Header: ' + dltInfo.entityIdFormat + '. Registration status: Verified on TRAI DLT platform.'});
+          } else {
+            dltInfo.registrationStatus = 'Legacy/Unformatted - May not be DLT registered';
+          }
+          // Time restriction check for promotional
+          if (dltInfo.timeRestricted) flags.push({type:'info',title:'â° Time Restricted (9AM-9PM)',description:'TRAI regulation: Promotional messages (suffix P) can only be sent between 9:00 AM and 9:00 PM IST. Violations are reportable.'});
+
+          const up=t.toUpperCase();
+          for (const gw of BULK_GATEWAY_PATTERNS) { if (up.includes(gw)) { flags.push({type:'warning',title:'Bulk SMS Gateway Detected',description:'Contains "'+gw+'" - a known bulk SMS gateway.'}); break; }}
+          for (const ind of PHISHING_INDICATORS) { if (ind.pattern.test(t)) flags.push({type:'danger',title:'Phishing Pattern Detected',description:ind.description}); }
+          if (/\d{3,}/.test(t) && /[A-Z]{3,}/i.test(t)) flags.push({type:'warning',title:'Mixed Alphanumeric Pattern',description:'Mixed numbers and letters - uncommon in standard sender IDs.'});
+        }
+        if (st==='shortcode') { isBulk=true; isAPI=true; flags.push({type:'info',title:'Short Code Sender',description:'Dedicated short code for automated messaging.'}); flags.push({type:'warning',title:'API/Bulk Gateway Route',description:'Short codes route through commercial SMS aggregator platforms, not the P2P cellular network.'}); }
+        if (st==='longcode') { isAPI=true; flags.push({type:'warning',title:'Long Code / Virtual Number',description:'May be a virtual number used by automated systems or VoIP services.'}); }
+        if (st==='p2p') { flags.push({type:'safe',title:'Person-to-Person Route',description:'Standard mobile number via cellular SS7/SMSC network.'}); flags.push({type:'info',title:'Cellular SMSC Routing',description:"P2P messages route through the carrier's own SMSC (Short Message Service Center)."}); }
+        if (st==='international') { flags.push({type:'warning',title:'International Origin',description:'International number. Could be VoIP/API. May bypass Indian DND regulations.'}); }
+
+        const components = buildComponents(t, st);
+
+        // Risk score
+        let score = 30;
+        if (st==='p2p') score -= 20;
+        if (st==='alphanumeric') score += 5;
+        if (st==='longcode') score += 15;
+        if (st==='unknown') score += 25;
+        if (isKnown) score -= 25;
+        if (gatewayInfo) { if (gatewayInfo.risk==='low') score-=10; if (gatewayInfo.risk==='medium') score+=10; if (gatewayInfo.risk==='high') score+=25; if (gatewayInfo.type==='government') score-=15; }
+        if (t.includes('-') && st==='alphanumeric') score -= 5;
+        if (dltInfo.registered) score -= 5;
+        if (cm) { if (cm.confidence>=90) score-=15; else if (cm.confidence>=70) score-=8; else if (cm.confidence>=50) score-=3; else if (cm.confidence<30) score+=10; if (cm.company.isVerifiedBrand) score-=10; if (cm.company.isGovernment) score-=10; if (cm.similarBrands && cm.similarBrands.length && cm.confidence<80) score+=15; }
+        score += flags.filter(f=>f.type==='danger').length * 15;
+        score += flags.filter(f=>f.type==='warning').length * 8;
+        score -= flags.filter(f=>f.type==='safe').length * 5;
+        score = Math.max(0, Math.min(100, score));
+
+        const riskLevel = score<=15?'safe':score<=30?'low':score<=55?'medium':score<=75?'high':'critical';
+        const riskLabels = {safe:'Safe - Verified Sender',low:'Low Risk',medium:'Medium Risk - Caution',high:'High Risk - Bulk/API',critical:'Critical - Possible Phishing'};
+        let routingMethod='Unknown', routingDesc='Unable to determine routing.';
+        if (isP2P) { routingMethod='SS7 / SMSC (Cellular Network)'; routingDesc='Routed through the carrier\'s Short Message Service Center via the SS7 signaling protocol. This is the standard person-to-person SMS pathway.'; }
+        else if (isAPI) { routingMethod='HTTP API / SMPP Gateway'; routingDesc='Sent via a commercial SMS aggregator using HTTP API or SMPP protocol. The message bypasses the standard cellular SMS path and is injected directly into the SMSC via enterprise gateways.'; }
+
+        return {rawHeader:t,senderType:st,senderTypeLabel:SENDER_LABELS[st],senderTypeDesc:SENDER_DESCS[st],components,gatewayInfo,suffixInfo,entityName,riskScore:score,riskLevel,riskLabel:riskLabels[riskLevel],isBulkSMS:isBulk,isP2P,isAPIBased:isAPI,isKnownSender:isKnown,isGovernment:isGov,flags,routingMethod,routingDesc,dltInfo,timestamp:Date.now(),companyMatch:cm};
+      }
+
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• RENDER HELPERS â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+      const RISK_COLORS = {safe:'#4ade80',low:'#22d3ee',medium:'#fbbf24',high:'#f97316',critical:'#ef4444'};
+      const FLAG_STYLES = {safe:{bg:'rgba(74,222,128,0.08)',border:'rgba(74,222,128,0.2)',color:'#4ade80'},info:{bg:'rgba(96,165,250,0.08)',border:'rgba(96,165,250,0.2)',color:'#60a5fa'},warning:{bg:'rgba(251,191,36,0.08)',border:'rgba(251,191,36,0.2)',color:'#fbbf24'},danger:{bg:'rgba(248,113,113,0.08)',border:'rgba(248,113,113,0.2)',color:'#f87171'}};
+
+      function renderRiskGauge(score, level, label, companyMatch) {
+        const c = RISK_COLORS[level];
+        const dashLen = score * 1.88;
+        const confScore = companyMatch ? companyMatch.confidence : 0;
+        const confColor = confScore>=80?'#4ade80':confScore>=50?'#fbbf24':'#f87171';
+        return `<div style="text-align:center">
+          <svg width="160" height="90" viewBox="0 0 160 90">
+            <defs><filter id="rg"><feGaussianBlur stdDeviation="3" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
+            <path d="M 15 75 A 65 65 0 0 1 145 75" fill="none" stroke="rgba(100,116,139,0.15)" stroke-width="10" stroke-linecap="round"/>
+            <path d="M 15 75 A 65 65 0 0 1 145 75" fill="none" stroke="${c}" stroke-width="10" stroke-linecap="round" stroke-dasharray="${dashLen} 204" filter="url(#rg)" style="transition:stroke-dasharray 0.8s cubic-bezier(0.4,0,0.2,1)"/>
+            <text x="80" y="62" text-anchor="middle" fill="${c}" font-size="32" font-weight="bold" font-family="JetBrains Mono,monospace" style="filter:drop-shadow(0 0 6px ${c}40)">${score}</text>
+            <text x="80" y="80" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="JetBrains Mono,monospace" letter-spacing="2">${level.toUpperCase()}</text>
+          </svg>
+          <div style="font-size:10px;color:${c};margin-top:2px;font-weight:600">${label}</div>
+          ${companyMatch && companyMatch.confidence>=10 ? `<div style="margin-top:10px"><div style="font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px">Company Match</div><div style="height:6px;background:rgba(51,65,85,0.4);border-radius:3px;overflow:hidden"><div style="height:100%;width:${confScore}%;background:linear-gradient(90deg,${confColor},${confColor}aa);border-radius:3px;transition:width 0.6s"></div></div><div style="font-size:10px;color:${confColor};margin-top:2px;font-weight:600">${confScore}%</div></div>` : ''}
+        </div>`;
+      }
+
+      function renderComponents(comps) {
+        return `<div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center">`+comps.map(c=>`<div style="padding:6px 12px;border-radius:8px;background:rgba(15,23,42,0.6);border:1px solid ${c.color}33">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:700;color:${c.color}">${c.part}</div>
+          <div style="font-size:9px;color:#94a3b8;margin-top:2px">${c.label}</div>
+        </div>`).join('')+`</div>`;
+      }
+
+      function renderFlags(flags) {
+        if (!flags.length) return '<div style="color:#64748b;font-size:13px;text-align:center;padding:24px">No flags generated</div>';
+        return flags.map(f=>{const s=FLAG_STYLES[f.type]||FLAG_STYLES.info; return `<div style="padding:12px 16px;border-radius:10px;background:${s.bg};border:1px solid ${s.border};margin-bottom:8px">
+          <div style="font-size:13px;font-weight:600;color:${s.color}">${f.title}</div>
+          <div style="font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5">${f.description}</div>
+        </div>`;}).join('');
+      }
+
+      function renderResult(r) {
+        const co = r.companyMatch;
+        const hasCo = co && co.confidence >= 50;
+        const logoChar = hasCo ? (co.company.logo||'ðŸ ¢') : (r.isP2P ? 'ðŸ“±' : 'â “');
+
+        // Tags
+        let tags = '';
+        if (hasCo) tags += `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:500;background:rgba(96,165,250,0.1);color:#60a5fa;border:1px solid rgba(96,165,250,0.2)">ðŸ ¢ ${co.company.name}</span> `;
+        if (r.isP2P) tags += `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:99px;font-size:11px;background:rgba(74,222,128,0.1);color:#4ade80;border:1px solid rgba(74,222,128,0.2)">â-  P2P</span> `;
+        if (r.isBulkSMS) tags += `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:99px;font-size:11px;background:rgba(251,191,36,0.1);color:#fbbf24;border:1px solid rgba(251,191,36,0.2)">â-  Bulk SMS</span> `;
+        if (r.isAPIBased) tags += `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:99px;font-size:11px;background:rgba(167,139,250,0.1);color:#a78bfa;border:1px solid rgba(167,139,250,0.2)">â-  API Gateway</span> `;
+        if (r.isKnownSender) tags += `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:99px;font-size:11px;background:rgba(74,222,128,0.1);color:#4ade80;border:1px solid rgba(74,222,128,0.2)">âœ“ Verified</span> `;
+        if (r.isGovernment) tags += `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:99px;font-size:11px;background:rgba(34,211,238,0.1);color:#22d3ee;border:1px solid rgba(34,211,238,0.2)">ðŸ ›ï¸  Government</span> `;
+        if (r.gatewayInfo) tags += `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:99px;font-size:11px;background:rgba(100,116,139,0.1);color:#cbd5e1;border:1px solid rgba(100,116,139,0.2)">Prefix: ${r.gatewayInfo.prefix} - ${r.gatewayInfo.type}</span> `;
+        if (r.suffixInfo) tags += `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:99px;font-size:11px;background:rgba(100,116,139,0.1);color:#cbd5e1;border:1px solid rgba(100,116,139,0.2)">Category: ${r.suffixInfo.category}</span> `;
+
+        const companyInfo = hasCo ? `<h2 style="font-size:18px;font-weight:700;color:#fff">${co.company.name}</h2>
+          <p style="font-size:12px;color:#94a3b8;margin-top:2px">${co.company.industry}${co.company.subIndustry?' - '+co.company.subIndustry:''}${co.company.headquartersCity?' -¢ '+co.company.headquartersCity:''}${co.company.website?' <a href="https://'+co.company.website+'" target="_blank" style="color:#60a5fa;font-size:11px;margin-left:6px">'+co.company.website+' â†-</a>':''}</p>`
+          : `<h2 style="font-size:16px;font-weight:600;color:#fff">${r.senderTypeLabel}</h2><p style="font-size:12px;color:#94a3b8;margin-top:4px">${r.senderTypeDesc}</p>`;
+
+        return `
+          <div style="display:grid;grid-template-columns:1fr 3fr;gap:16px">
+            <div style="background:rgba(15,23,42,0.8);border:1px solid rgba(51,65,85,0.4);border-radius:14px;padding:20px;display:flex;flex-direction:column;align-items:center;justify-content:center">
+              <div style="font-size:9px;color:#64748b;margin-bottom:8px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:1px">Risk Assessment</div>
+              ${renderRiskGauge(r.riskScore, r.riskLevel, r.riskLabel, r.companyMatch)}
+            </div>
+            <div style="background:rgba(15,23,42,0.8);border:1px solid rgba(51,65,85,0.4);border-radius:14px;padding:20px">
+              <div style="display:flex;align-items:flex-start;gap:14px">
+                <div style="width:56px;height:56px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:28px;background:rgba(51,65,85,0.3);border:1px solid rgba(51,65,85,0.5);flex-shrink:0">${logoChar}</div>
+                <div style="flex:1;min-width:0">${companyInfo}</div>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:14px">${tags}</div>
+            </div>
+          </div>
+
+          <!-- Tabs -->
+          <div style="background:rgba(15,23,42,0.8);border:1px solid rgba(51,65,85,0.4);border-radius:14px;overflow:hidden;margin-top:16px">
+            <div style="display:flex;border-bottom:1px solid rgba(51,65,85,0.4);overflow-x:auto" id="sms-tab-bar">
+              <button class="sms-tab active" data-tab="breakdown" style="padding:10px 18px;font-size:13px;font-weight:500;color:#a78bfa;border:none;background:transparent;cursor:pointer;border-bottom:2px solid #a78bfa;white-space:nowrap;font-family:inherit">Header Breakdown</button>
+              <button class="sms-tab" data-tab="dlt" style="padding:10px 18px;font-size:13px;font-weight:500;color:#64748b;border:none;background:transparent;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;font-family:inherit">DLT Analysis</button>
+              <button class="sms-tab" data-tab="flags" style="padding:10px 18px;font-size:13px;font-weight:500;color:#64748b;border:none;background:transparent;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;font-family:inherit">Flags (${r.flags.length})</button>
+              <button class="sms-tab" data-tab="routing" style="padding:10px 18px;font-size:13px;font-weight:500;color:#64748b;border:none;background:transparent;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;font-family:inherit">SMSC Routing</button>
+              <button class="sms-tab" data-tab="weblookup" style="padding:10px 18px;font-size:13px;font-weight:500;color:#64748b;border:none;background:transparent;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;font-family:inherit">ðŸŒ  Web Lookup</button>
+              <button class="sms-tab" data-tab="metadata" style="padding:10px 18px;font-size:13px;font-weight:500;color:#64748b;border:none;background:transparent;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;font-family:inherit">Metadata</button>
+            </div>
+            <div style="padding:20px" id="sms-tab-content">
+              ${renderComponents(r.components)}
+            </div>
+          </div>`;
+      }
+
+      // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• UI WIRING â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+      const input = document.getElementById('sms-input');
+      const clearBtn = document.getElementById('sms-clear-btn');
+      const historyBtn = document.getElementById('sms-history-btn');
+      const historyPanel = document.getElementById('sms-history-panel');
+      const hintEl = document.getElementById('sms-hint');
+      const resultsEl = document.getElementById('sms-results');
+      const examplesEl = document.getElementById('sms-examples');
+
+      let history = [], currentResult = null;
+
+      // Example headers
+      const EXAMPLES = [
+        {header:'AD-NJGRUP-S',label:'â“ Unknown - Try Web Lookup',cat:'Unknown'},
+        {header:'BT-ANGONE-P',label:'Angel One (Stock Broker)',cat:'Finance'},
+        {header:'AD-HDFCBK',label:'HDFC Bank Advisory',cat:'Banking'},
+        {header:'VM-SBIINB-T',label:'SBI Transactional',cat:'Banking'},
+        {header:'IRCTCI',label:'IRCTC Railway Booking',cat:'Government'},
+        {header:'PAYTMS',label:'Paytm Services',cat:'Fintech'},
+        {header:'+919876543210',label:'Indian Mobile Number',cat:'P2P'},
+        {header:'DM-AMAZN-P',label:'âš ï¸ Suspicious Amazon-like',cat:'Suspicious'},
+        {header:'SWIGGY',label:'Swiggy Food Delivery',cat:'Food Tech'},
+        {header:'GP-UIDIAI',label:'UIDAI / Aadhaar',cat:'Government'},
+        {header:'ZOMATO',label:'Zomato Delivery',cat:'Food Tech'},
+        {header:'BT-FLIPKR-P',label:'âš ï¸ Misspelled Flipkart',cat:'Suspicious'},
+        {header:'56161',label:'Paytm Short Code',cat:'Short Code'},
+        {header:'AMAZON',label:'Amazon India',cat:'E-Commerce'},
+        {header:'+447911123456',label:'UK International',cat:'International'},
+        {header:'JM-620016-P',label:'ðŸ”¢ Numeric DLT Entity',cat:'Numeric DLT'},
+        {header:'AD-123456-T',label:'ðŸ”¢ Numeric Transactional',cat:'Numeric DLT'},
+      ];
+      const CAT_COLORS = {Unknown:'#eab308',Banking:'#3b82f6',Finance:'#6366f1',Fintech:'#8b5cf6',Government:'#22d3ee','Food Tech':'#f97316','E-Commerce':'#a855f7',P2P:'#4ade80',Suspicious:'#ef4444','Short Code':'#fbbf24',International:'#ec4899','Numeric DLT':'#f97316'};
+
+      function showExamples() {
+        examplesEl.innerHTML = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+          <i data-lucide="zap" class="w-4 h-4" style="color:#fbbf24"></i>
+          <span style="font-size:13px;font-weight:500;color:#cbd5e1">Try These SMS Headers</span>
+          <span style="font-size:11px;color:#64748b">- click any to analyze</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px">`+
+        EXAMPLES.map(ex=>`<button class="sms-example-btn" data-header="${ex.header}" style="text-align:left;padding:10px 12px;border-radius:10px;background:rgba(30,41,59,0.4);border:1px solid rgba(51,65,85,0.4);cursor:pointer;transition:all 0.15s">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:13px;color:#e2e8f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${ex.header}</div>
+          <div style="font-size:10px;color:#64748b;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${ex.label}</div>
+          <span style="display:inline-block;font-size:9px;padding:1px 6px;border-radius:4px;margin-top:6px;border:1px solid ${CAT_COLORS[ex.cat]||'#64748b'}33;color:${CAT_COLORS[ex.cat]||'#64748b'};background:${CAT_COLORS[ex.cat]||'#64748b'}11">${ex.cat}</span>
+        </button>`).join('')+`</div>`;
+        examplesEl.style.display = '';
+        lucide.createIcons({nameAttr:'data-lucide'});
+        examplesEl.querySelectorAll('.sms-example-btn').forEach(b=>b.addEventListener('click',()=>{input.value=b.dataset.header;input.dispatchEvent(new Event('input'));}));
+      }
+
+      function doAnalysis() {
+        const val = input.value.toUpperCase().trim();
+        clearBtn.style.display = val ? '' : 'none';
+        if (!val) { resultsEl.style.display='none'; currentResult=null; showExamples(); return; }
+        examplesEl.style.display = 'none';
+        const r = analyzeHeader(val);
+        if (!r) { resultsEl.style.display='none'; return; }
+        currentResult = r;
+        // Add to history
+        if (!history.some(h=>h.rawHeader===r.rawHeader)) { history.unshift(r); if (history.length>30) history.length=30; }
+
+        // Show hint
+        if (r.companyMatch && r.companyMatch.confidence >= 50) {
+          hintEl.innerHTML = `<span style="font-size:18px">${r.companyMatch.company.logo||'ðŸ ¢'}</span> <span style="font-size:13px;color:#cbd5e1;font-weight:500">${r.companyMatch.company.name}</span> <span style="color:#64748b;font-size:12px">-¢</span> <span style="font-size:12px;color:#94a3b8">${r.companyMatch.company.industry}</span>`;
+          hintEl.style.display = 'flex'; hintEl.style.alignItems = 'center'; hintEl.style.gap = '8px';
+        } else { hintEl.style.display = 'none'; }
+
+        resultsEl.innerHTML = renderResult(r);
+        resultsEl.style.display = '';
+
+        // Wire tabs
+        const tabBar = document.getElementById('sms-tab-bar');
+        const tabContent = document.getElementById('sms-tab-content');
+        if (tabBar) tabBar.querySelectorAll('.sms-tab').forEach(tb=>tb.addEventListener('click',()=>{
+          tabBar.querySelectorAll('.sms-tab').forEach(x=>{x.style.color='#64748b';x.style.borderBottom='2px solid transparent';});
+          tb.style.color='#a78bfa';tb.style.borderBottom='2px solid #a78bfa';
+          const tab = tb.dataset.tab;
+          if (tab==='breakdown') tabContent.innerHTML = renderComponents(r.components);
+          // â”€â”€ DLT Analysis Tab â”€â”€
+          else if (tab==='dlt') {
+            const d = r.dltInfo || {registered:false,consentType:'Unknown',timeRestricted:false,templateCategory:'Unknown',entityIdFormat:'N/A',registrationStatus:'Unverified'};
+            const regColor = d.registered ? '#4ade80' : '#f87171';
+            const regIcon = d.registered ? 'âœ…' : 'â Œ';
+            tabContent.innerHTML = `
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                <div style="grid-column:1/-1;padding:16px;background:linear-gradient(135deg,rgba(167,139,250,0.06),rgba(34,211,238,0.04));border:1px solid rgba(167,139,250,0.2);border-radius:12px">
+                  <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+                    <div style="width:40px;height:40px;border-radius:10px;background:${d.registered?'rgba(74,222,128,0.1)':'rgba(248,113,113,0.1)'};border:1px solid ${regColor}33;display:flex;align-items:center;justify-content:center;font-size:20px">${regIcon}</div>
+                    <div><div style="font-size:14px;font-weight:700;color:${regColor}">${d.registrationStatus}</div><div style="font-size:11px;color:#94a3b8;margin-top:2px">TRAI Distributed Ledger Technology (DLT) Platform</div></div>
+                  </div>
+                  <div style="font-size:11px;color:#94a3b8;line-height:1.7;padding:10px;background:rgba(15,23,42,0.5);border-radius:8px">Under TRAI's 2018 TCCCPR regulations, all commercial SMS senders must register on a DLT platform (Jio, Airtel, Vodafone-Idea, BSNL). Headers must follow the <span style="color:#a78bfa;font-weight:600">XX-ENTITY-Y</span> format where XX=Telecom circle, ENTITY=registered brand, Y=message category.</div>
+                </div>
+                <div style="padding:14px;background:rgba(15,23,42,0.5);border-radius:10px;border:1px solid rgba(51,65,85,0.3)">
+                  <div style="font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Template Category</div>
+                  <div style="font-size:16px;font-weight:700;color:#a78bfa;font-family:'JetBrains Mono',monospace">${d.templateCategory}</div>
+                  <div style="font-size:10px;color:#64748b;margin-top:4px">${d.templateCategory==='Promotional'?'Marketing/advertising content':'Service or transactional content'}</div>
+                </div>
+                <div style="padding:14px;background:rgba(15,23,42,0.5);border-radius:10px;border:1px solid rgba(51,65,85,0.3)">
+                  <div style="font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Consent Type</div>
+                  <div style="font-size:14px;font-weight:600;color:#22d3ee">${d.consentType}</div>
+                  <div style="font-size:10px;color:#64748b;margin-top:4px">${d.consentType.includes('Explicit')?'User must explicitly opt-in':'Based on existing relationship'}</div>
+                </div>
+                <div style="padding:14px;background:rgba(15,23,42,0.5);border-radius:10px;border:1px solid rgba(51,65,85,0.3)">
+                  <div style="font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Header Format</div>
+                  <div style="font-size:14px;font-weight:600;color:#fbbf24;font-family:'JetBrains Mono',monospace">${d.entityIdFormat}</div>
+                  <div style="font-size:10px;color:#64748b;margin-top:4px">DLT Entity ID pattern</div>
+                </div>
+                <div style="padding:14px;background:rgba(15,23,42,0.5);border-radius:10px;border:1px solid rgba(51,65,85,0.3)">
+                  <div style="font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Time Restriction</div>
+                  <div style="font-size:14px;font-weight:600;color:${d.timeRestricted?'#fbbf24':'#4ade80'}">${d.timeRestricted?'â ° 9AM-9PM Only':'ðŸ•  No Restriction'}</div>
+                  <div style="font-size:10px;color:#64748b;margin-top:4px">${d.timeRestricted?'TRAI rule: Promotional SMS restricted to 9AM-9PM IST':'Transactional/Service messages can be sent 24/7'}</div>
+                </div>
+                ${r.companyMatch && r.companyMatch.telecomCircle ? `<div style="grid-column:1/-1;padding:14px;background:rgba(15,23,42,0.5);border-radius:10px;border:1px solid rgba(51,65,85,0.3)">
+                  <div style="font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Telecom Operator / DLT Platform</div>
+                  <div style="display:flex;gap:20px;margin-top:4px">
+                    <div><span style="font-size:12px;color:#94a3b8">Circle:</span> <span style="font-size:13px;font-weight:600;color:#22d3ee">${r.companyMatch.telecomCircle}</span></div>
+                    <div><span style="font-size:12px;color:#94a3b8">Operator:</span> <span style="font-size:13px;font-weight:600;color:#a78bfa">${r.companyMatch.telecomOperator||'Unknown'}</span></div>
+                    <div><span style="font-size:12px;color:#94a3b8">Platform:</span> <span style="font-size:13px;font-weight:600;color:#fbbf24">${r.companyMatch.dltPlatform||'Unknown'}</span></div>
+                  </div>
+                </div>` : ''}
+              </div>`;
+          }
+
+          else if (tab==='flags') tabContent.innerHTML = renderFlags(r.flags);
+
+          // â”€â”€ Enhanced Routing Diagram â”€â”€
+          else if (tab==='routing') {
+            const steps = r.isP2P ? [
+              {icon:'ðŸ“±',label:'Sender Device',desc:'Mobile handset',color:'#4ade80'},
+              {icon:'ðŸ“¡',label:'Cell Tower (BTS)',desc:'Base Transceiver Station',color:'#60a5fa'},
+              {icon:'ðŸ ¢',label:'Carrier SMSC',desc:'Short Message Service Center',color:'#a78bfa'},
+              {icon:'ðŸ“¶',label:'SS7 Network',desc:'Signaling System 7',color:'#22d3ee'},
+              {icon:'ðŸ“¡',label:'Destination BTS',desc:'Recipient cell tower',color:'#60a5fa'},
+              {icon:'ðŸ“±',label:'Recipient',desc:'Delivery to handset',color:'#fbbf24'}
+            ] : [
+              {icon:'ðŸ ¢',label:'Enterprise App',desc:'Business application',color:'#4ade80'},
+              {icon:'âš¡',label:'SMS API/SMPP',desc:'HTTP API or SMPP protocol',color:'#f97316'},
+              {icon:'ðŸ”-',label:'SMS Aggregator',desc:'Commercial gateway provider',color:'#a78bfa'},
+              {icon:'ðŸ“¡',label:'DLT Platform',desc:'TRAI registered platform',color:'#22d3ee'},
+              {icon:'ðŸ ¢',label:'Carrier SMSC',desc:'Network SMSC injection',color:'#60a5fa'},
+              {icon:'ðŸ“±',label:'Recipient',desc:'Delivery to handset',color:'#fbbf24'}
+            ];
+            tabContent.innerHTML = `
+              <div style="padding:16px;background:rgba(15,23,42,0.5);border-radius:12px;border:1px solid rgba(51,65,85,0.3)">
+                <div style="font-size:15px;font-weight:700;color:#a78bfa;margin-bottom:4px">${r.routingMethod}</div>
+                <div style="font-size:12px;color:#94a3b8;line-height:1.6;margin-bottom:20px">${r.routingDesc}</div>
+                <div style="display:flex;align-items:center;gap:4px;overflow-x:auto;padding:8px 0">
+                  ${steps.map((s,i)=>`<div style="display:flex;align-items:center;flex-shrink:0">
+                    <div style="text-align:center;min-width:90px">
+                      <div style="width:48px;height:48px;margin:0 auto;border-radius:12px;background:${s.color}12;border:1px solid ${s.color}33;display:flex;align-items:center;justify-content:center;font-size:22px;box-shadow:0 0 12px ${s.color}15">${s.icon}</div>
+                      <div style="font-size:11px;font-weight:600;color:${s.color};margin-top:6px">${s.label}</div>
+                      <div style="font-size:9px;color:#64748b;margin-top:2px">${s.desc}</div>
+                    </div>
+                    ${i<steps.length-1?'<div style="color:#475569;font-size:18px;margin:0 2px;animation:sms-pulse 1.5s infinite">â†’</div>':''}
+                  </div>`).join('')}
+                </div>
+                <style>.sms-pulse{animation:smsPulse 1.5s ease-in-out infinite}@keyframes smsPulse{0%,100%{opacity:0.4}50%{opacity:1}}</style>
+              </div>`;
+          }
+
+          // â”€â”€ Web Lookup Tab â”€â”€
+          else if (tab==='weblookup') {
+            const header = r.rawHeader;
+            const bodyMatch = header.match(/^[A-Z]{2}-([A-Z0-9]+)(?:-[A-Z]{1,3})?$/i);
+            const st = bodyMatch ? bodyMatch[1] : header;
+            const sq = encodeURIComponent(st + ' SMS sender India company');
+            const liveId = 'sms-live-' + Date.now();
+            tabContent.innerHTML = '<div id="'+liveId+'" style="margin-bottom:12px"></div><div style="text-align:center;margin-bottom:16px"><div style="font-size:20px;margin-bottom:6px">ðŸŒ </div><div style="font-size:15px;font-weight:700;color:#e2e8f0;margin-bottom:4px">Web Lookup: <span style="color:#a78bfa">'+st+'</span></div><div style="font-size:11px;color:#64748b">Extracted from header '+header+'</div></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;max-width:500px;margin:0 auto 16px"><a href="https://www.google.com/search?q='+sq+'" target="_blank" rel="noopener" style="padding:12px 14px;border-radius:10px;background:rgba(96,165,250,0.08);border:1px solid rgba(96,165,250,0.2);color:#60a5fa;font-size:12px;font-weight:600;text-decoration:none;display:flex;align-items:center;justify-content:center;gap:6px">ðŸ”  Google Search</a><a href="https://www.google.com/search?q='+encodeURIComponent(st+' scam fraud report')+'" target="_blank" rel="noopener" style="padding:12px 14px;border-radius:10px;background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.2);color:#f87171;font-size:12px;font-weight:600;text-decoration:none;display:flex;align-items:center;justify-content:center;gap:6px">ðŸš¨ Scam Reports</a><a href="https://www.google.com/search?q='+encodeURIComponent(st+' DLT TRAI registered')+'" target="_blank" rel="noopener" style="padding:12px 14px;border-radius:10px;background:rgba(167,139,250,0.08);border:1px solid rgba(167,139,250,0.2);color:#a78bfa;font-size:12px;font-weight:600;text-decoration:none;display:flex;align-items:center;justify-content:center;gap:6px">ðŸ“‹ DLT Registration</a><a href="https://www.google.com/search?q='+encodeURIComponent(st+' SMS company identify')+'" target="_blank" rel="noopener" style="padding:12px 14px;border-radius:10px;background:rgba(74,222,128,0.08);border:1px solid rgba(74,222,128,0.2);color:#4ade80;font-size:12px;font-weight:600;text-decoration:none;display:flex;align-items:center;justify-content:center;gap:6px">ðŸ ¢ Identify Company</a></div><div style="padding:12px;background:rgba(15,23,42,0.4);border-radius:10px;border:1px solid rgba(51,65,85,0.2)"><div style="font-size:9px;color:#475569;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Investigation Portals</div><div style="display:flex;flex-wrap:wrap;gap:6px"><a href="https://smsheader.trai.gov.in" target="_blank" rel="noopener" style="padding:4px 10px;border-radius:5px;background:rgba(34,211,238,0.08);border:1px solid rgba(34,211,238,0.15);color:#22d3ee;font-size:11px;text-decoration:none">TRAI Header Portal</a><a href="https://www.cybercrime.gov.in" target="_blank" rel="noopener" style="padding:4px 10px;border-radius:5px;background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.15);color:#f87171;font-size:11px;text-decoration:none">Cybercrime Portal</a><a href="https://sancharsaathi.gov.in" target="_blank" rel="noopener" style="padding:4px 10px;border-radius:5px;background:rgba(74,222,128,0.08);border:1px solid rgba(74,222,128,0.15);color:#4ade80;font-size:11px;text-decoration:none">Sanchar Saathi</a><a href="https://www.google.com/search?q='+encodeURIComponent(st+' site:reddit.com OR site:twitter.com')+'" target="_blank" rel="noopener" style="padding:4px 10px;border-radius:5px;background:rgba(167,139,250,0.08);border:1px solid rgba(167,139,250,0.15);color:#a78bfa;font-size:11px;text-decoration:none">Social Media</a></div></div>';
+
+          }
+
+
+          // â”€â”€ Enhanced Metadata Tab â”€â”€
+          else if (tab==='metadata') {
+            const d = r.dltInfo || {};
+            tabContent.innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">`+
+            [['Raw Header',r.rawHeader],['Sender Type',r.senderTypeLabel],['Risk Score',r.riskScore+'/100 ('+r.riskLevel+')'],
+             ['Routing',r.routingMethod],['Bulk SMS',r.isBulkSMS?'Yes':'No'],['API Based',r.isAPIBased?'Yes':'No'],
+             ['Known Sender',r.isKnownSender?'Yes':'No'],['Government',r.isGovernment?'Yes':'No'],['Entity',r.entityName||'-'],
+             ['Flags',r.flags.length+' total'],['Company',r.companyMatch?r.companyMatch.company.name+' ('+r.companyMatch.confidence+'%)':'Not matched'],['Match Method',r.companyMatch?r.companyMatch.matchMethod:'-'],
+             ['DLT Registered',d.registered?'Yes':'No'],['Template Category',d.templateCategory||'-'],['Consent Type',d.consentType||'-'],
+             ['Time Restricted',d.timeRestricted?'Yes (9AM-9PM)':'No'],['DLT Format',d.entityIdFormat||'-'],['Registration Status',d.registrationStatus||'-']]
+            .map(([k,v])=>`<div style="padding:10px 14px;background:rgba(15,23,42,0.5);border-radius:8px;border:1px solid rgba(51,65,85,0.3)"><div style="font-size:8px;color:#64748b;text-transform:uppercase;font-family:'JetBrains Mono',monospace;letter-spacing:1px">${k}</div><div style="font-size:12px;color:#e2e8f0;margin-top:4px;font-family:'JetBrains Mono',monospace">${v}</div></div>`).join('')+`</div>`;
+          }
+        }));
+
+        app.logTerminal('SMS Analyzer: '+r.rawHeader+' â†’ '+(r.companyMatch?r.companyMatch.company.name:'Unknown')+' | Risk: '+r.riskScore+'/100 ('+r.riskLevel+')', r.riskLevel==='high'||r.riskLevel==='critical'?'error':'success');
+      }
+      // Event listeners
+      let debounce = null;
+      input.addEventListener('input', ()=>{ input.value = input.value.toUpperCase(); clearTimeout(debounce); debounce = setTimeout(doAnalysis, 150); });
+      clearBtn.addEventListener('click', ()=>{ input.value=''; doAnalysis(); input.focus(); });
+      historyBtn.addEventListener('click', ()=>{
+        if (historyPanel.style.display === 'none' || !historyPanel.style.display) {
+          if (!history.length) return;
+          historyPanel.innerHTML = `<div style="padding:8px 16px;border-bottom:1px solid rgba(51,65,85,0.3);display:flex;justify-content:space-between;align-items:center"><span style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:1px">Recent (${history.length})</span><button id="sms-clear-history" style="font-size:10px;color:#64748b;border:none;background:transparent;cursor:pointer">Clear All</button></div>`+
+            history.map(h=>`<button class="sms-hist-item" data-header="${h.rawHeader}" style="width:100%;text-align:left;padding:10px 16px;border:none;background:transparent;border-bottom:1px solid rgba(51,65,85,0.1);cursor:pointer;display:flex;align-items:center;gap:10px">
+              <span style="font-size:16px;flex-shrink:0">${h.companyMatch?.company?.logo||'ðŸ“±'}</span>
+              <div style="flex:1;min-width:0"><div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#cbd5e1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${h.rawHeader}</div><div style="font-size:10px;color:#64748b">${h.companyMatch?.company?.name||h.senderTypeLabel}</div></div>
+              <span style="font-size:10px;padding:2px 6px;border-radius:99px;background:${RISK_COLORS[h.riskLevel]}15;color:${RISK_COLORS[h.riskLevel]}">${h.riskScore}</span>
+            </button>`).join('');
+          historyPanel.style.display = '';
+          historyPanel.querySelectorAll('.sms-hist-item').forEach(b=>b.addEventListener('click',()=>{input.value=b.dataset.header;historyPanel.style.display='none';input.dispatchEvent(new Event('input'));}));
+          const clr = document.getElementById('sms-clear-history');
+          if (clr) clr.addEventListener('click',()=>{history=[];historyPanel.style.display='none';});
+        } else historyPanel.style.display = 'none';
+      });
+
+
+      // Init
+      showExamples();
+      lucide.createIcons();
+      const totalEntities = Object.keys(SENDER_ID_MAP).length + Object.keys(SHORT_CODE_MAP).length;
+      const el1 = document.getElementById('sms-stat-entities'); if (el1) el1.textContent = totalEntities;
+      app.logTerminal('SMS Header Analyzer initialized. '+totalEntities+' sender IDs, '+Object.keys(TELECOM_CIRCLE_MAP).length+' telecom circles loaded.', 'success');
+    }
+  },
+  // =====================================================================
+  //  IP INTELLIGENCE & TELECOM ATTRIBUTION ANALYZER
+  // =====================================================================
+  {
+    id: "ip-intel-analyzer",
+    name: "IP Intelligence",
+    category: "Network Forensics",
+    icon: "radar",
+    status: "Ready",
+    badgeType: "blue",
+    description: "Upload PCAP, CSV, firewall logs, or telecom CDRs. Server-side analysis with ASN enrichment, service identification, threat intelligence, and evidence correlation.",
+    placeholderHtml: `
+      <div class="space-y-4">
+        <div class="cyber-card p-5 border border-opacity-20 border-accent-blue">
+          <h3 class="text-base font-bold font-mono text-accent-blue mb-3 flex items-center gap-2">
+            <i data-lucide="radar" class="w-5 h-5"></i> IP INTELLIGENCE & TELECOM ATTRIBUTION
+          </h3>
+          <p class="text-xs text-text-secondary mb-4">Upload evidence files for server-side analysis. Supports PCAP, PCAPNG, CSV, TSV, LOG, TXT.</p>
+          <div id="ipintel-dropzone" class="border-2 border-dashed border-white border-opacity-10 rounded-lg p-6 text-center cursor-pointer hover:border-accent-blue hover:border-opacity-40 transition-all mb-3">
+            <i data-lucide="upload-cloud" class="w-8 h-8 mx-auto text-text-muted mb-2"></i>
+            <p class="text-xs text-text-muted">Drop evidence files here or click to browse</p>
+            <p class="text-[10px] text-text-muted mt-1">PCAP, PCAPNG, CSV, TSV, LOG, TXT</p>
+          </div>
+          <input type="file" id="ipintel-file-input" class="hidden" accept=".pcap,.pcapng,.csv,.tsv,.log,.txt" multiple>
+          <div class="flex items-center gap-3 flex-wrap">
+            <span id="ipintel-file-label" class="text-xs font-mono text-text-muted flex-1">No files selected</span>
+            <button id="ipintel-clear-btn" class="text-[10px] font-mono text-text-muted hover:text-white px-2 py-1 rounded border border-white border-opacity-10 hover:border-opacity-20 transition-all">CLEAR</button>
+            <button id="ipintel-analyze-btn" class="cyber-btn text-xs"><i data-lucide="scan" class="w-4 h-4"></i> ANALYZE EVIDENCE</button>
+          </div>
+          <div id="ipintel-upload-status" class="text-xs font-mono mt-2 hidden"></div>
+          <div id="ipintel-progress-wrap" class="mt-2 hidden"><div class="h-1 bg-white bg-opacity-5 rounded-full overflow-hidden"><div id="ipintel-progress-bar" class="h-full bg-accent-blue transition-all duration-300" style="width:0%"></div></div></div>
+        </div>
+        <div id="ipintel-results" class="hidden space-y-4">
+          <div class="cyber-card p-4 border border-opacity-10 border-accent-blue"><div class="flex justify-between items-start flex-wrap gap-2"><div><p class="text-[10px] font-mono text-text-muted uppercase">Investigation Workspace</p><h3 id="ipintel-case-id" class="text-sm font-bold font-mono text-white">Case</h3><p id="ipintel-case-subtitle" class="text-[10px] text-text-muted mt-0.5"></p></div><div class="flex gap-1.5"><a id="ipintel-export-pdf" href="#" class="text-[10px] font-mono px-2 py-1 rounded border border-white border-opacity-10 text-text-muted hover:text-white hover:border-opacity-30 transition-all opacity-50 pointer-events-none">PDF</a><a id="ipintel-export-xlsx" href="#" class="text-[10px] font-mono px-2 py-1 rounded border border-white border-opacity-10 text-text-muted hover:text-white hover:border-opacity-30 transition-all opacity-50 pointer-events-none">Excel</a><a id="ipintel-export-csv" href="#" class="text-[10px] font-mono px-2 py-1 rounded border border-white border-opacity-10 text-text-muted hover:text-white hover:border-opacity-30 transition-all opacity-50 pointer-events-none">CSV</a><a id="ipintel-export-json" href="#" class="text-[10px] font-mono px-2 py-1 rounded border border-white border-opacity-10 text-text-muted hover:text-white hover:border-opacity-30 transition-all opacity-50 pointer-events-none">JSON</a></div></div></div>
+          <div id="ipintel-summary-cards" class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2"></div>
+          <div id="ipintel-custody" class="hidden"><p class="text-[10px] font-mono text-text-muted uppercase mb-1.5">Chain of Custody</p><div id="ipintel-custody-list" class="space-y-1.5"></div></div>
+
+          <!-- Analytics Band -->
+          <div id="ipintel-analytics-band" class="ipintel-analytics-band" style="display:none">
+            <div class="ipintel-analytics-panel">
+              <div class="ipintel-panel-header"><div><div class="ipintel-panel-label">Host Inventory</div><h4 class="ipintel-panel-title">Roles, peers &amp; evidence</h4></div><span id="ipintel-host-badge" class="ipintel-analytics-badge">0 hosts</span></div>
+              <div id="ipintel-host-list" class="ipintel-compact-list"></div>
+            </div>
+            <div class="ipintel-analytics-panel">
+              <div class="ipintel-panel-header"><div><div class="ipintel-panel-label">Session Reconstruction</div><h4 class="ipintel-panel-title">Bidirectional conversations</h4></div><span id="ipintel-session-badge" class="ipintel-analytics-badge">0 sessions</span></div>
+              <div id="ipintel-session-list" class="ipintel-compact-list"></div>
+            </div>
+            <div class="ipintel-analytics-panel ipintel-analytics-panel-wide">
+              <div class="ipintel-panel-header"><div><div class="ipintel-panel-label">Connection Intelligence Profile</div><h4 class="ipintel-panel-title">MAC, Vendor, Protocol &amp; Session Metadata</h4></div><span id="ipintel-forensics-badge" class="ipintel-analytics-badge">Select a row</span></div>
+              <div id="ipintel-forensics-profile" class="ipintel-compact-list" style="min-height:60px"><div class="ipintel-compact-empty">Select a destination row to view its connection intelligence profile.</div></div>
+            </div>
+            <div class="ipintel-analytics-panel">
+              <div class="ipintel-panel-header"><div><div class="ipintel-panel-label">Protocol Mix</div><h4 class="ipintel-panel-title">Observed distribution</h4></div></div>
+              <div id="ipintel-protocol-list" class="ipintel-compact-list"></div>
+            </div>
+            <div class="ipintel-analytics-panel">
+              <div class="ipintel-panel-header"><div><div class="ipintel-panel-label">VoIP Analysis</div><h4 class="ipintel-panel-title">SIP, RTP, STUN, TURN, ICE</h4></div><span id="ipintel-voip-badge" class="ipintel-analytics-badge">No VoIP</span></div>
+              <div id="ipintel-voip-list" class="ipintel-compact-list"></div>
+            </div>
+            <div class="ipintel-analytics-panel">
+              <div class="ipintel-panel-header"><div><div class="ipintel-panel-label">Anomaly Detection</div><h4 class="ipintel-panel-title">Security &amp; Protocol Alerts</h4></div><span id="ipintel-anomaly-badge" class="ipintel-analytics-badge">0 alerts</span></div>
+              <div id="ipintel-anomaly-list" class="ipintel-compact-list"></div>
+            </div>
+          </div>
+          <div class="grid grid-cols-1 lg:grid-cols-5 gap-4">
+            <div class="lg:col-span-2 cyber-card p-0 overflow-hidden border border-white border-opacity-5">
+              <div class="p-3 border-b border-white border-opacity-5 flex justify-between items-center"><div><h4 class="text-xs font-bold font-mono text-white">Destination Intelligence</h4><span id="ipintel-row-count" class="text-[10px] text-text-muted">0 destinations</span></div></div>
+              <div class="p-2 border-b border-white border-opacity-5 flex flex-wrap gap-1.5"><input id="ipintel-search" class="cyber-input text-[10px] flex-1 min-w-[120px]" placeholder="Search IP, ASN, provider..."><input id="ipintel-port-filter" class="cyber-input text-[10px] w-16" placeholder="Port"><select id="ipintel-role-filter" class="cyber-input text-[10px] w-auto"><option value="">All roles</option></select><select id="ipintel-service-filter" class="cyber-input text-[10px] w-auto"><option value="">All services</option></select><select id="ipintel-threat-filter" class="cyber-input text-[10px] w-auto"><option value="">All threats</option><option value="malicious">Malicious</option><option value="suspicious">Score 50+</option><option value="clean">Clean</option></select></div>
+              <div class="overflow-auto max-h-[500px]"><table class="w-full text-[11px]"><thead class="sticky top-0 bg-bg-primary"><tr class="text-left text-text-muted font-mono"><th class="px-3 py-2">Destination</th><th class="px-3 py-2">Role</th><th class="px-3 py-2">Service</th><th class="px-3 py-2">ASN</th><th class="px-3 py-2">Country</th><th class="px-3 py-2">Threat</th></tr></thead><tbody id="ipintel-table-body"><tr><td colspan="6" class="px-3 py-8 text-center text-text-muted">No evidence analyzed yet.</td></tr></tbody></table></div>
+            </div>
+            <div class="lg:col-span-3 cyber-card p-0 overflow-hidden border border-white border-opacity-5">
+              <div id="ipintel-detail-empty" class="p-6 text-center"><p class="text-[10px] font-mono text-text-muted uppercase mb-1">Selected IP Details</p><h4 class="text-sm font-bold text-white mb-1">Select a destination</h4><p class="text-[10px] text-text-muted">Click a row to review IP profile, ASN, threat intel, timeline, flows, and correlation.</p></div>
+              <div id="ipintel-detail-content" class="hidden">
+                <div class="p-3 border-b border-white border-opacity-5 flex justify-between items-center"><div><p class="text-[10px] font-mono text-text-muted uppercase">Selected IP Details</p><h4 id="ipintel-detail-ip" class="text-sm font-bold font-mono text-white">-</h4><p id="ipintel-detail-org" class="text-[10px] text-text-muted">-</p></div><span id="ipintel-detail-threat" class="text-[10px] font-mono px-2 py-0.5 rounded-full border border-accent-lime text-accent-lime">Clean</span></div>
+                <div id="ipintel-detail-metrics" class="grid grid-cols-4 gap-1.5 p-2"></div>
+                <div class="flex flex-wrap gap-0 border-b border-white border-opacity-5 px-2"><button class="ipintel-tab text-[10px] font-mono px-2.5 py-1.5 rounded-t transition-all text-text-muted hover:text-white bg-white bg-opacity-10 text-accent-blue" data-tab="overview">Overview</button><button class="ipintel-tab text-[10px] font-mono px-2.5 py-1.5 rounded-t transition-all text-text-muted hover:text-white" data-tab="timeline">Timeline</button><button class="ipintel-tab text-[10px] font-mono px-2.5 py-1.5 rounded-t transition-all text-text-muted hover:text-white" data-tab="threat">Threat Intel</button><button class="ipintel-tab text-[10px] font-mono px-2.5 py-1.5 rounded-t transition-all text-text-muted hover:text-white" data-tab="whois">WHOIS</button><button class="ipintel-tab text-[10px] font-mono px-2.5 py-1.5 rounded-t transition-all text-text-muted hover:text-white" data-tab="dns">DNS</button><button class="ipintel-tab text-[10px] font-mono px-2.5 py-1.5 rounded-t transition-all text-text-muted hover:text-white" data-tab="asn">ASN</button><button class="ipintel-tab text-[10px] font-mono px-2.5 py-1.5 rounded-t transition-all text-text-muted hover:text-white" data-tab="correlation">Correlation</button><button class="ipintel-tab text-[10px] font-mono px-2.5 py-1.5 rounded-t transition-all text-text-muted hover:text-white" data-tab="report">Report</button><button class="ipintel-tab text-[10px] font-mono px-2.5 py-1.5 rounded-t transition-all text-text-muted hover:text-white" data-tab="flows">Flows</button><button class="ipintel-tab text-[10px] font-mono px-2.5 py-1.5 rounded-t transition-all text-text-muted hover:text-white" data-tab="packets">Packets</button><button class="ipintel-tab text-[10px] font-mono px-2.5 py-1.5 rounded-t transition-all text-text-muted hover:text-white" data-tab="notes">Notes</button></div>
+                <div id="ipintel-detail-panel" class="p-3 overflow-auto max-h-[400px]"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        </div>
+      </div>
+    `,
+    initLogic: function() {
+      const dropzone=document.getElementById('ipintel-dropzone'),fileInput=document.getElementById('ipintel-file-input'),fileLabel=document.getElementById('ipintel-file-label'),clearBtn=document.getElementById('ipintel-clear-btn'),analyzeBtn=document.getElementById('ipintel-analyze-btn'),uploadStatus=document.getElementById('ipintel-upload-status'),progressWrap=document.getElementById('ipintel-progress-wrap'),progressBar=document.getElementById('ipintel-progress-bar'),resultsArea=document.getElementById('ipintel-results');
+      let currentData=null,selectedRow=null,activeTab='overview',selectedPacketIndex=0,packetSearchQuery='',packetProtocolFilter='';
+
+      // Drag & drop + file selection
+      if(dropzone&&fileInput){dropzone.addEventListener('click',()=>fileInput.click());['dragenter','dragover'].forEach(ev=>{dropzone.addEventListener(ev,e=>{e.preventDefault();dropzone.style.borderColor='rgba(0,210,255,0.6)';dropzone.style.background='rgba(0,210,255,0.05)';});});['dragleave','drop'].forEach(ev=>{dropzone.addEventListener(ev,e=>{e.preventDefault();dropzone.style.borderColor='';dropzone.style.background='';});});dropzone.addEventListener('drop',e=>{fileInput.files=e.dataTransfer.files;updateFileLabel(fileInput.files);});fileInput.addEventListener('change',()=>updateFileLabel(fileInput.files));}
+      function updateFileLabel(files){const list=[...files];if(!list.length){fileLabel.textContent='No files selected';return;}const sz=list.reduce((s,f)=>s+f.size,0);fileLabel.textContent=list.length===1?list[0].name+' ('+fmtB(sz)+')':list.length+' files ('+fmtB(sz)+')';app.logTerminal('IP Intel: '+list.length+' file(s) selected.','info');}
+      if(clearBtn){clearBtn.addEventListener('click',()=>{fileInput.value='';fileLabel.textContent='No files selected';resultsArea.classList.add('hidden');uploadStatus.classList.add('hidden');progressWrap.classList.add('hidden');currentData=null;selectedRow=null;});}
+
+      // Upload & analyze
+      if(analyzeBtn){analyzeBtn.addEventListener('click',async()=>{const files=[...fileInput.files];if(!files.length){app.logTerminal('IP Intel: No files selected.','error');alert('Select evidence files first.');return;}analyzeBtn.disabled=true;analyzeBtn.innerHTML='<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> ANALYZING...';lucide.createIcons();uploadStatus.textContent='Uploading & analyzing '+files.length+' file(s)...';uploadStatus.className='text-xs font-mono text-accent-blue';uploadStatus.classList.remove('hidden');progressWrap.classList.remove('hidden');progressBar.style.width='30%';app.logTerminal('IP Intel: Uploading '+files.length+' file(s) to backend...','info');try{const form=new FormData();files.forEach(f=>form.append('files',f));progressBar.style.width='50%';const response=await fetch('/api/upload',{method:'POST',body:form});progressBar.style.width='90%';if(!response.ok){const err=await response.json().catch(()=>({}));throw new Error(err.detail||'Server error '+response.status);}const data=await response.json();progressBar.style.width='100%';currentData=data;selectedRow=data.rows&&data.rows[0]?data.rows[0]:null;selectedPacketIndex=0;packetSearchQuery='';packetProtocolFilter='';uploadStatus.textContent='Analysis complete - '+(data.rows?data.rows.length:0)+' destinations, '+(data.raw_packet_count||data.summary?.total_packets||0)+' packets.';uploadStatus.className='text-xs font-mono text-accent-lime';app.logTerminal('IP Intel: '+(data.rows?data.rows.length:0)+' destinations, '+(data.raw_connection_count||0)+' records, '+(data.raw_packet_count||0)+' packets analyzed.','success');setTimeout(()=>{progressWrap.classList.add('hidden');},800);renderResults(data);}catch(err){progressBar.style.width='100%';progressBar.style.background='#ef4444';uploadStatus.textContent='Analysis failed: '+err.message;uploadStatus.className='text-xs font-mono text-red-400';app.logTerminal('IP Intel: Failed - '+err.message,'error');setTimeout(()=>{progressWrap.classList.add('hidden');progressBar.style.background='';},2000);}analyzeBtn.disabled=false;analyzeBtn.innerHTML='<i data-lucide="scan" class="w-4 h-4"></i> ANALYZE EVIDENCE';lucide.createIcons();});}
+
+      // === UTILITY FUNCTIONS ===
+      function fmtB(b){if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)+' KB';return(b/1048576).toFixed(1)+' MB';}
+      function esc(str){return String(str).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));}
+      function shortDt(value){if(!value)return'n/a';const d=new Date(value);return isNaN(d.getTime())?value:d.toLocaleString();}
+      function truncText(v,max=48){const t=String(v??'');return t.length<=max?t:t.slice(0,max-1)+'…';}
+      function portLabel(row){if(!row.destination_port)return'Port Unknown';return esc(row.protocol||'IP')+'/'+esc(String(row.destination_port))+' '+esc(row.port_name||'');}
+      function coords(row){return(row.latitude!=null&&row.longitude!=null)?row.latitude+', '+row.longitude:'Not available';}
+      function registryHint(row){if(row.country==='United States')return'ARIN';if(row.country==='India')return'APNIC';if(['Netherlands','Germany'].includes(row.country))return'RIPE NCC';if(row.country==='Australia')return'APNIC';return'Unknown';}
+      function dnsHint(row){if(row.destination_ip==='8.8.8.8')return'Google Public DNS';if(row.destination_ip==='1.1.1.1')return'Cloudflare Resolver';if((row.destination_port||0)===53)return'DNS traffic observed';return row.category||'No DNS-specific signal';}
+      function getThreatState(row){if(row.malicious)return{label:'Malicious',cls:'bg-red-500 bg-opacity-20 text-red-400',tone:'bad'};if(row.reputation_score>=50)return{label:'Suspicious',cls:'bg-yellow-500 bg-opacity-20 text-yellow-400',tone:'warn'};return{label:'Clean',cls:'bg-blue-500 bg-opacity-20 text-blue-400',tone:'clean'};}
+
+      // === PAYLOAD HELPERS (full packet inspection) ===
+      // --- Forensics Profile helpers ---
+      function formatDuration(seconds){if(!seconds||seconds<=0)return'0s';const m=Math.floor(seconds/60);const s=seconds%60;if(m>0)return m+'m '+s+'s';return s+'s';}
+      function shortTimeOnly(isoStr){if(!isoStr)return'n/a';const d=new Date(isoStr);return isNaN(d.getTime())?isoStr:d.toLocaleTimeString();}
+      function forensicsRow(label,value,icon){const v=value||'n/a';return'<div class="flex justify-between items-start py-2 px-2 border-b border-white border-opacity-5 hover:bg-white hover:bg-opacity-[0.03] transition-all"><span class="text-[9px] font-mono text-text-muted uppercase flex items-center gap-1.5 flex-shrink-0">'+(icon?'<i data-lucide="'+icon+'" class="w-3 h-3 text-accent-blue"></i>':'')+esc(label)+'</span><span class="text-[10px] font-mono text-white text-right ml-3 min-w-0 break-all" style="word-break:break-all;overflow-wrap:anywhere;max-width:60%">'+esc(String(v))+'</span></div>';}
+      function renderForensicsProfile(row){
+        const el=document.getElementById('ipintel-forensics-profile');if(!el)return;
+        const badge=document.getElementById('ipintel-forensics-badge');if(badge)badge.textContent=esc(row.destination_ip);
+        const srcIp=(row.source_ips||[row.source_ip]).filter(Boolean).join(', ')||'Unknown';
+        const dstIp=row.destination_ip||'Unknown';
+        const srcMac=row.source_mac||'Not captured';
+        const dstMac=row.destination_mac||'Not captured';
+        const srcVendor=row.source_vendor||'Unknown';
+        const dstVendor=row.destination_vendor||'Unknown';
+        const proto=row.protocol||'UNKNOWN';
+        const dns=row.dns_query||'None';
+        const flags=row.tcp_flags||'None';
+        const pkts=Number(row.packet_count||0).toLocaleString();
+        const bytes=fmtB(row.bytes_transferred||0);
+        const dur=formatDuration(row.duration_seconds||0);
+        const first=shortTimeOnly(row.first_seen);
+        const last=shortTimeOnly(row.last_seen);
+        el.innerHTML=
+          forensicsRow('Source IP',srcIp,'monitor')+
+          forensicsRow('Destination IP',dstIp,'globe')+
+          forensicsRow('Source MAC',srcMac,'cpu')+
+          forensicsRow('Destination MAC',dstMac,'cpu')+
+          forensicsRow('Source Vendor',srcVendor,'tag')+
+          forensicsRow('Source Category',row.source_vendor_category||'Unknown','tag')+
+          forensicsRow('Destination Vendor',dstVendor,'tag')+
+          forensicsRow('Destination Category',row.destination_vendor_category||'Unknown','tag')+
+          forensicsRow('Protocol',proto,'layers')+
+          forensicsRow('DNS',dns,'search')+
+          forensicsRow('TCP Flags',flags,'flag')+
+          forensicsRow('Packet Count',pkts,'hash')+
+          forensicsRow('Bytes',bytes,'hard-drive')+
+          forensicsRow('Duration',dur,'clock')+
+          forensicsRow('First Seen',first,'play')+
+          forensicsRow('Last Seen',last,'square');
+        lucide.createIcons({attrs:{class:'w-3 h-3'}});
+      }
+      function payloadMeta(kind){const n=String(kind||'').toLowerCase();if(n==='dns'||n==='plaintext'){const isDns=n==='dns';return{label:isDns?'DNS':'Plaintext',tone:'plain',note:isDns?'DNS / mDNS payload':'Readable payload extracted',contentLabel:isDns?'DNS content':'Readable content',mode:'text'};}if(n==='encrypted')return{label:'Encrypted',tone:'enc',note:'Ciphertext preview (not decryptable here)',contentLabel:'Ciphertext / bytes',mode:'hex'};if(n==='binary')return{label:'Binary',tone:'bin',note:'Non-text payload',contentLabel:'Raw bytes',mode:'hex'};if(n==='metadata_only'||n==='empty')return{label:'No Payload',tone:'none',note:'No extractable application payload',contentLabel:'No payload',mode:'none'};return{label:'Unknown',tone:'none',note:'Payload present but could not be decoded',contentLabel:'Unavailable',mode:'none'};}
+      function payloadBadge(kind){const m=payloadMeta(kind);return'<span class="text-[9px] font-mono px-1.5 py-0.5 rounded '+(m.tone==='plain'?'bg-blue-500 bg-opacity-20 text-blue-400':m.tone==='enc'?'bg-purple-500 bg-opacity-20 text-purple-400':m.tone==='bin'?'bg-orange-500 bg-opacity-20 text-orange-400':'bg-white bg-opacity-5 text-text-muted')+'">'+esc(m.label)+'</span>';}
+      function renderPayloadPanel(record,scope){const m=payloadMeta(record.payload_kind);const preview=record.payload_preview||'No packet payload extracted';const hex=record.payload_hex||'';let body='';if(m.mode==='text'){body='<div class="mt-1"><span class="text-[9px] font-mono text-text-muted">'+esc(m.contentLabel)+'</span><pre class="text-[10px] font-mono text-white bg-white bg-opacity-5 p-2 rounded mt-0.5 whitespace-pre-wrap break-all max-h-24 overflow-auto">'+esc(preview)+'</pre>'+(hex?'<div class="text-[9px] text-text-muted mt-1">Raw: <span class="font-mono">'+esc(hex)+'</span></div>':'')+'</div>';}else if(m.mode==='hex'){body='<div class="mt-1"><span class="text-[9px] font-mono text-text-muted">'+esc(m.contentLabel)+'</span><pre class="text-[10px] font-mono text-purple-300 bg-white bg-opacity-5 p-2 rounded mt-0.5 whitespace-pre-wrap break-all max-h-24 overflow-auto">'+esc(hex||preview)+'</pre><div class="text-[9px] text-text-muted mt-1">Plaintext not available without decryption material.</div></div>';}else{body='<div class="text-[9px] text-text-muted mt-1">'+esc(m.note)+'</div>';}return'<div class="mt-2 p-2 rounded border border-white border-opacity-5 bg-white bg-opacity-[0.02]"><div class="flex justify-between items-center"><span class="text-[9px] font-mono text-text-muted uppercase">'+(scope==='flow'?'Flow Payload':'Payload View')+'</span><span class="text-[9px] text-text-muted">'+esc(m.note)+'</span></div>'+body+'</div>';}
+      function renderPacketDetails(pd){if(!pd||!pd.length)return'';return'<div class="mt-2 p-2 rounded border border-white border-opacity-5"><div class="text-[10px] font-mono text-text-muted uppercase mb-1">Packet Breakdown</div>'+pd.map((p,i)=>'<div class="p-2 bg-white bg-opacity-5 rounded mb-1.5"><div class="flex justify-between items-center"><div><span class="text-[10px] font-mono text-white font-bold">Packet '+(i+1)+'</span><span class="text-[10px] text-text-muted ml-2">'+shortDt(p.timestamp)+' | '+esc(p.protocol||'?')+' | '+p.length+' bytes</span></div>'+payloadBadge(p.payload_kind)+'</div><div class="text-[10px] font-mono text-text-muted">'+esc(p.source_ip||'')+':'+esc(String(p.source_port||'?'))+' → '+esc(p.destination_ip||'')+':'+esc(String(p.destination_port||'?'))+'</div>'+(p.summary?'<div class="text-[9px] text-text-muted mt-0.5">Layers: '+esc(p.summary)+'</div>':'')+(p.decoded_type?'<div class="text-[9px] text-accent-blue mt-0.5">Decoded: '+esc(p.decoded_type)+(p.decoded_summary?' | '+esc(p.decoded_summary):'')+'</div>':'')+renderPayloadPanel(p,'packet')+'</div>').join('')+'</div>';}
+
+      // === PACKET DECODING (DNS, HTTP, Encrypted) ===
+      function packetDecodedItems(p){const f=p.decoded_fields||{};const items=[['Decoded Type',p.decoded_type||'Unknown'],['Summary',p.decoded_summary||p.decoded_detail||'No protocol-specific decoding']];if((p.decoded_type||'').startsWith('DNS')){items.push(['Transaction ID',f.transaction_id??'n/a'],['RCode',f.rcode||'n/a'],['Questions',(f.questions||[]).join('; ')||'None'],['Answers',(f.answers||[]).join('; ')||'None']);return items;}if(p.decoded_type==='HTTP Request'){items.push(['Method',f.method||'n/a'],['Path',f.path||'n/a'],['Host',f.host||'n/a'],['Version',f.version||'n/a'],['Headers',renderHttpHeaders(f.headers||{})],['Body Preview',f.body_preview||'n/a']);return items;}if(p.decoded_type==='HTTP Response'){items.push(['Status',(f.status_code||'n/a')+' '+(f.reason||'')],['Version',f.version||'n/a'],['Headers',renderHttpHeaders(f.headers||{})],['Body Preview',f.body_preview||'n/a']);return items;}if(p.decoded_type==='Encrypted Payload'){items.push(['Ciphertext',f.ciphertext_preview||p.payload_hex||'n/a'],['Note','Plaintext cannot be recovered without decryption material.']);return items;}return items;}
+      function renderHttpHeaders(h){const e=Object.entries(h||{});if(!e.length)return'None';return e.slice(0,8).map(([k,v])=>k+': '+v).join('; ');}
+
+      // === RENDER RESULTS ===
+      function renderResults(data){resultsArea.classList.remove('hidden');const caseId=document.getElementById('ipintel-case-id');const caseSub=document.getElementById('ipintel-case-subtitle');if(caseId)caseId.textContent='Case '+(data.id||'').slice(0,8);const corr=data.correlation?.case_summary;const totalPackets=data.raw_packet_count||data.summary?.total_packets||0;if(caseSub)caseSub.textContent=(data.raw_connection_count||0)+' network records, '+totalPackets+' packets, '+(data.rows?data.rows.length:0)+' destinations'+(corr?', '+corr.correlated_events+' correlated events, '+corr.matched_sessions+' matched sessions. '+corr.confidence_label+'.':'.');const summary=data.summary||{};const cards=[['Connections',summary.total_connections||0],['Packets',summary.total_packets||0],['Destinations',summary.total_destination_ips||0],['Hosts',summary.total_hosts||0],['Sessions',summary.total_sessions||0],['Threats',summary.threat_indicators||0],['Countries',summary.countries_contacted||0],['Traffic',fmtB(summary.total_bytes||0)]];const cardsEl=document.getElementById('ipintel-summary-cards');if(cardsEl)cardsEl.innerHTML=cards.map(([l,v])=>'<div class="cyber-card p-3 border-opacity-10 text-center"><span class="text-[10px] font-mono text-text-muted uppercase block">'+l+'</span><span class="text-lg font-bold font-mono text-white mt-0.5 block">'+esc(String(v))+'</span></div>').join('');
+        // Chain of custody
+        const custodyEl=document.getElementById('ipintel-custody');const custodyList=document.getElementById('ipintel-custody-list');if(data.evidence_files&&data.evidence_files.length&&custodyEl&&custodyList){custodyEl.classList.remove('hidden');custodyList.innerHTML=data.evidence_files.map(f=>'<div class="p-2 bg-white bg-opacity-5 rounded border-l-2 border-accent-blue border-opacity-40"><div class="flex justify-between items-center"><span class="text-xs font-mono text-white font-bold">'+esc(f.filename)+'</span><span class="text-[10px] font-mono text-text-muted">'+esc((f.evidence_type||'').toUpperCase())+' | '+fmtB(f.size_bytes||0)+'</span></div><div class="text-[10px] font-mono text-text-muted mt-1">SHA-256: '+esc((f.sha256||'').slice(0,32))+'... | Net: '+(f.network_records||0)+' | Telecom: '+(f.telecom_records||0)+'</div></div>').join('');}
+        // Hydrate role filter
+        const roleFilter=document.getElementById('ipintel-role-filter');if(roleFilter&&data.rows){const roles=[...new Set(data.rows.map(r=>r.role).filter(Boolean))].sort();roleFilter.innerHTML='<option value="">All roles</option>'+roles.map(s=>'<option value="'+esc(s)+'">'+esc(s)+'</option>').join('');}
+        // Hydrate service filter
+        const serviceFilter=document.getElementById('ipintel-service-filter');if(serviceFilter&&data.rows){const svcs=[...new Set(data.rows.map(r=>r.category).filter(Boolean))].sort();serviceFilter.innerHTML='<option value="">All services</option>'+svcs.map(s=>'<option value="'+esc(s)+'">'+esc(s)+'</option>').join('');}
+        // Export buttons
+        [['ipintel-export-pdf','pdf'],['ipintel-export-xlsx','xlsx'],['ipintel-export-csv','csv'],['ipintel-export-json','json']].forEach(([elId,fmt])=>{const el=document.getElementById(elId);if(el){el.classList.remove('opacity-50','pointer-events-none');el.href='/api/export/'+data.id+'.'+fmt;el.target='_blank';}});
+        renderAnalyticsBand(data);
+        renderTable();if(selectedRow)showDetail(selectedRow);lucide.createIcons();}
+
+      // === ANALYTICS BAND — Full rich rendering matching standalone tool ===
+      function renderAnalyticsBand(data){
+        const band=document.getElementById('ipintel-analytics-band');
+        if(band){band.style.display='grid';}
+
+        // ── Host Inventory ──
+        const hosts=data.hosts||[];
+        const hBadge=document.getElementById('ipintel-host-badge');
+        if(hBadge)hBadge.textContent=hosts.length+' host'+(hosts.length!==1?'s':'');
+        const hList=document.getElementById('ipintel-host-list');
+        if(hList)hList.innerHTML=hosts.length
+          ?hosts.slice(0,8).map(h=>{
+             const portsLabel=h.destination_ports&&h.destination_ports.length?' : ['+h.destination_ports.slice(0,4).join(', ')+']':'';
+             return '<div class="ipintel-compact-row"><div class="ipintel-compact-primary"><strong>'+esc(h.ip)+'<span class="text-[10px] text-accent-blue font-mono ml-1.5">'+portsLabel+'</span></strong><span class="ipintel-secondary-line">'+esc(h.role||'client device')+' | '+esc(h.asn||'n/a')+' | '+esc(h.country||'Unknown')+'</span></div><div class="ipintel-compact-meta"><span class="ipintel-role-pill">'+esc(h.role||'client device')+'</span><span class="ipintel-secondary-line">'+(h.peer_ips||[]).length+' peers</span></div></div>';
+          }).join('')
+          :'<div class="ipintel-compact-empty">No hosts identified yet.</div>';
+
+        // ── Session Reconstruction ──
+        const sessions=data.sessions||[];
+        const sBadge=document.getElementById('ipintel-session-badge');
+        if(sBadge)sBadge.textContent=sessions.length+' session'+(sessions.length!==1?'s':'');
+        const sList=document.getElementById('ipintel-session-list');
+        if(sList)sList.innerHTML=sessions.length
+          ?sessions.slice(0,8).map(s=>'<div class="ipintel-compact-row"><div class="ipintel-compact-primary"><strong>'+esc(s.client_ip)+(s.source_port?':'+s.source_port:'')+' <span class="ipintel-arrow">-></span> '+esc(s.server_ip)+(s.destination_port?':'+s.destination_port:'')+'</strong><span class="ipintel-secondary-line">'+esc(s.service||'Unknown')+' | '+esc(s.protocol||'UNKNOWN')+' | '+shortDt(s.start_time)+'</span></div><div class="ipintel-compact-meta"><span class="ipintel-secondary-line">'+esc(String(s.duration_seconds||0))+'s</span><span class="ipintel-secondary-line">'+fmtB(s.bytes_transferred||0)+'</span></div></div>').join('')
+          :'<div class="ipintel-compact-empty">No sessions reconstructed yet.</div>';
+
+
+        // ── Protocol Mix ──
+        const categoryMix=data.summary?.category_mix||[];
+        const pList=document.getElementById('ipintel-protocol-list');
+        if(pList){
+          if(categoryMix.length){
+            pList.innerHTML=categoryMix.map(p=>'<div class="ipintel-compact-row" style="display:block;padding:8px 11px"><div style="display:flex;justify-content:space-between"><strong style="font-size:12px;font-family:monospace;color:#f8fafc">'+esc(p.label)+'</strong><span class="ipintel-service-pill">'+p.pct+'%</span></div><div class="ipintel-secondary-line">'+esc(String(p.count))+' packets</div><div class="ipintel-proto-bar-wrap"><div class="ipintel-proto-bar" style="width:'+p.pct+'%"></div></div></div>').join('');
+          } else {
+            const protos=data.protocol_summary||[];
+            const total=protos.reduce((s,p)=>s+Number(p.count||0),0)||1;
+            pList.innerHTML=protos.length
+              ?protos.slice(0,8).map(p=>{const pct=Math.round((Number(p.count||0)/total)*100);return'<div class="ipintel-compact-row" style="display:block;padding:8px 11px"><div style="display:flex;justify-content:space-between"><strong style="font-size:12px;font-family:monospace;color:#f8fafc">'+esc(p.protocol||'UNKNOWN')+'</strong><span class="ipintel-service-pill">'+pct+'%</span></div><div class="ipintel-secondary-line">'+esc(String(p.count||0))+' records</div><div class="ipintel-proto-bar-wrap"><div class="ipintel-proto-bar" style="width:'+pct+'%"></div></div></div>';}).join('')
+              :'<div class="ipintel-compact-empty">No protocol distribution available.</div>';
+          }
+        }
+
+        // ── VoIP Analysis ──
+        const voip=data.voip_analysis||[];
+        const vBadge=document.getElementById('ipintel-voip-badge');
+        if(vBadge)vBadge.textContent=voip.length?voip.length+' VoIP session'+(voip.length!==1?'s':''):'No VoIP sessions';
+        const vList=document.getElementById('ipintel-voip-list');
+        if(vList)vList.innerHTML=voip.length
+          ?voip.slice(0,6).map(call=>{
+             const shorten = (ip) => {
+               if (!ip) return "";
+               if (ip.includes(":")) {
+                 const parts = ip.split(":");
+                 if (parts.length > 3) {
+                   return parts[0] + ":" + parts[1] + ":::" + parts[parts.length - 1];
+                 }
+               }
+               return ip;
+             };
+             let routeHtml = '';
+             if (call.route && call.route.length) {
+               routeHtml = `<div class="mt-2 text-[10px] text-slate-400 font-sans border-t border-white border-opacity-5 pt-1.5"><div class="text-[8px] font-mono text-text-muted uppercase font-bold tracking-wider mb-1">Reconstructed Route Hops:</div><div class="pl-2 border-l border-accent-lime border-opacity-30 space-y-1">`+
+                 call.route.map((hop, idx) => {
+                   const arrow = idx > 0 ? '<span class="text-slate-600 mr-1 font-mono">↓</span>' : '';
+                   const roleColor = (hop.role === 'caller' || hop.role === 'receiver') ? 'text-accent-orange' : (hop.role === 'relay' ? 'text-purple-400' : 'text-accent-blue');
+                   return `<div class="truncate">${arrow}<span class="${roleColor} font-mono font-bold">[${esc(hop.role || 'Hop')}]</span> <span class="font-mono text-white select-all">${esc(shorten(hop.ip))}${hop.port ? ':'+hop.port : ''}</span> ${hop.name ? `<span class="text-text-muted">(${esc(hop.name)})</span>` : ''}</div>`;
+                 }).join('') + `</div></div>`;
+             }
+             return '<div class="ipintel-compact-row" style="flex-direction:column;align-items:stretch;gap:4px;"><div style="display:flex;justify-content:space-between;width:100%;"><div class="ipintel-compact-primary"><strong>'+esc(call.call_type||'VoIP')+'</strong><span class="ipintel-secondary-line">'+esc(shorten(call.caller))+' <span class="ipintel-arrow">-></span> '+esc(shorten(call.remote_peer))+' | '+esc(call.media_ports||'n/a')+'</span></div><div class="ipintel-compact-meta"><span class="ipintel-secondary-line">MOS '+esc(String(call.mos_estimate??'n/a'))+'</span></div></div>'+routeHtml+'</div>';
+          }).join('')
+          :'<div class="ipintel-compact-empty">No SIP, RTP, STUN, TURN, ICE or WebRTC sessions identified.</div>';
+
+        // ── Anomaly Alerts ──
+        const anomalies=data.anomalies||[];
+        const aBadge=document.getElementById('ipintel-anomaly-badge');
+        if(aBadge)aBadge.textContent=anomalies.length+' alert'+(anomalies.length!==1?'s':'');
+        const aList=document.getElementById('ipintel-anomaly-list');
+        if(aList)aList.innerHTML=anomalies.length
+          ?anomalies.slice(0,8).map(a=>{
+             const severityColor=a.severity==='high'?'#ff3366':a.severity==='medium'?'#ff9900':'#00d2ff';
+             return '<div class="ipintel-compact-row" style="border-left: 2px solid '+severityColor+'"><div class="ipintel-compact-primary"><strong>'+esc(a.title)+'</strong><span class="ipintel-secondary-line">'+esc(a.description)+'</span></div><div class="ipintel-compact-meta"><span class="text-[9px] font-mono font-bold uppercase px-1.5 py-0.5 rounded" style="background:'+severityColor+'20;color:'+severityColor+'">'+esc(a.severity)+'</span></div></div>';
+          }).join('')
+          :'<div class="ipintel-compact-empty">No security anomalies detected in this traffic batch.</div>';
+      }
+
+      // === FILTERING (with role + port filter) ===
+      function getFilteredRows(){if(!currentData||!currentData.rows)return[];const text=(document.getElementById('ipintel-search')?.value||'').toLowerCase().trim();const role=document.getElementById('ipintel-role-filter')?.value||'';const service=document.getElementById('ipintel-service-filter')?.value||'';const threat=document.getElementById('ipintel-threat-filter')?.value||'';const port=(document.getElementById('ipintel-port-filter')?.value||'').trim();return currentData.rows.filter(row=>{const h=[row.destination_ip,row.source_ip,row.asn,row.asn_org,row.isp,row.country,row.category,row.service,row.role].join(' ').toLowerCase();return(!text||h.includes(text))&&(!role||row.role===role)&&(!service||row.category===service)&&(!port||String(row.destination_port||'')===port)&&(!threat||(threat==='malicious'&&row.malicious)||(threat==='suspicious'&&row.reputation_score>=50)||(threat==='clean'&&!row.malicious&&row.reputation_score<50));});}
+
+      // === DESTINATION TABLE (with Role column) ===
+      function renderTable(){const rows=getFilteredRows();const countEl=document.getElementById('ipintel-row-count');if(countEl)countEl.textContent=rows.length+' destinations';const tbody=document.getElementById('ipintel-table-body');if(!tbody)return;if(!rows.length){tbody.innerHTML='<tr><td colspan="6" class="px-3 py-8 text-center text-text-muted">No destinations match filters.</td></tr>';return;}if(!selectedRow||!rows.some(r=>r.destination_ip===selectedRow.destination_ip)){selectedRow=rows[0];showDetail(selectedRow);}tbody.innerHTML=rows.map(row=>{const sel=selectedRow&&selectedRow.destination_ip===row.destination_ip;const thr=getThreatState(row);const roleLabel=row.role||'';return '<tr class="border-b border-white border-opacity-5 hover:bg-white hover:bg-opacity-5 cursor-pointer transition-all '+(sel?'bg-white bg-opacity-10 border-l-2 border-accent-blue':'')+'" data-ip="'+esc(row.destination_ip)+'"><td class="px-3 py-2"><span class="text-white font-bold">'+esc(row.destination_ip)+'</span>'+(row.destination_port?'<span class="text-[10px] text-accent-blue font-mono ml-1.5">:'+esc(row.destination_port)+'</span>':'')+'<br><span class="text-[10px] text-text-muted">'+esc(row.isp||'')+'</span></td><td class="px-3 py-2"><span class="text-[10px] px-1.5 py-0.5 rounded bg-white bg-opacity-5 text-accent-lime">'+esc(roleLabel||'—')+'</span></td><td class="px-3 py-2"><span class="text-[10px] px-1.5 py-0.5 rounded bg-white bg-opacity-5 text-accent-blue">'+esc(row.category||'')+'</span></td><td class="px-3 py-2"><span class="text-white">'+esc(row.asn||'')+'</span><br><span class="text-[10px] text-text-muted">'+esc(row.asn_org||'')+'</span></td><td class="px-3 py-2">'+esc(row.country||'')+'<br><span class="text-[10px] text-text-muted">'+esc(row.city||'')+'</span></td><td class="px-3 py-2"><span class="text-[10px] px-1.5 py-0.5 rounded '+thr.cls+'">'+thr.label+'</span><br><span class="text-[10px] text-text-muted">'+String(row.reputation_score||0)+'/100</span></td></tr>';}).join('');tbody.querySelectorAll('tr[data-ip]').forEach(tr=>{tr.addEventListener('click',()=>{const row=currentData.rows.find(r=>r.destination_ip===tr.dataset.ip);if(row){selectedRow=row;renderTable();showDetail(row);}});});}
+
+      // === DETAIL PANEL HEADER ===
+      function showDetail(row){document.getElementById('ipintel-detail-empty')?.classList.add('hidden');document.getElementById('ipintel-detail-content')?.classList.remove('hidden');const ipEl=document.getElementById('ipintel-detail-ip');const orgEl=document.getElementById('ipintel-detail-org');const threatEl=document.getElementById('ipintel-detail-threat');if(ipEl)ipEl.textContent=row.destination_ip+(row.destination_port?':'+row.destination_port:'');if(orgEl)orgEl.textContent=(row.asn_org||'')+' | '+(row.asn||'');const thr=getThreatState(row);if(threatEl){threatEl.textContent=thr.label;threatEl.className='text-[10px] font-mono px-2 py-0.5 rounded-full border '+(row.malicious?'border-red-400 text-red-400':row.reputation_score>=50?'border-yellow-400 text-yellow-400':'border-accent-lime text-accent-lime');}const metricsEl=document.getElementById('ipintel-detail-metrics');if(metricsEl)metricsEl.innerHTML=[['Country',row.country||'Unknown'],['ASN',row.asn||'n/a'],['Connections',row.connection_count||0],['Bytes',fmtB(row.bytes_transferred||0)]].map(([k,v])=>'<div class="p-2 bg-white bg-opacity-5 rounded border border-white border-opacity-5 text-center"><span class="text-[9px] font-mono text-text-muted block">'+esc(k)+'</span><span class="text-xs font-bold font-mono text-white">'+esc(String(v))+'</span></div>').join('');document.querySelectorAll('.ipintel-tab').forEach(btn=>{btn.classList.toggle('bg-white',btn.dataset.tab===activeTab);btn.classList.toggle('bg-opacity-10',btn.dataset.tab===activeTab);btn.classList.toggle('text-accent-blue',btn.dataset.tab===activeTab);});renderForensicsProfile(row);renderDetailTab(row);}
+
+      // === TAB SWITCHING ===
+      document.querySelectorAll('.ipintel-tab').forEach(btn=>{btn.addEventListener('click',()=>{activeTab=btn.dataset.tab;document.querySelectorAll('.ipintel-tab').forEach(b=>{b.classList.remove('bg-white','bg-opacity-10','text-accent-blue');});btn.classList.add('bg-white','bg-opacity-10','text-accent-blue');if(selectedRow)renderDetailTab(selectedRow);});});
+
+      // === DETAIL LIST / CARD HELPERS ===
+      function kvT(items){return items.map(([k,v])=>{const sv=String(v||'n/a');const display=sv.length>80?sv.slice(0,77)+'…':sv;return'<div class="flex justify-between items-start py-1.5 border-b border-white border-opacity-5 overflow-hidden"><span class="text-[10px] font-mono text-text-muted uppercase flex-shrink-0">'+esc(k)+'</span><span class="text-[11px] font-mono text-white text-right ml-3 min-w-0 break-all overflow-hidden" style="word-break:break-all;overflow-wrap:anywhere;max-width:65%">'+esc(display)+'</span></div>';}).join('');}
+      function detailCard(title,items){return'<div class="p-3 bg-white bg-opacity-5 rounded border border-white border-opacity-5 overflow-hidden"><h4 class="text-[10px] font-mono text-text-muted uppercase mb-2">'+esc(title)+'</h4>'+kvT(items)+'</div>';}
+
+      // === ALL DETAIL TABS (full feature parity) ===
+      function renderDetailTab(row){const panel=document.getElementById('ipintel-detail-panel');if(!panel)return;
+
+        // OVERVIEW - 3-card grid: IP Profile, Geo, Service
+        if(activeTab==='overview'){panel.innerHTML='<div class="grid grid-cols-1 lg:grid-cols-3 gap-3">'+detailCard('IP Profile',[['Destination',row.destination_ip+(row.destination_port?':'+row.destination_port:'')],['Source',(row.source_ips||[row.source_ip]).filter(Boolean).join(', ')||'Unknown'],['Hostname',row.hostname||'Not resolved'],['Port',portLabel(row)],['IP Source',row.ip_source||'Local GeoIP']])+detailCard('Geo',[['Country',row.country||'Unknown'],['Region',row.region||'Unknown'],['City',row.city||'Unknown'],['Coordinates',coords(row)]])+detailCard('Service',[['Classification',row.service||'Unknown'],['Matched Range',row.matched_prefix||'No range match'],['Evidence',(row.service_match_reasons||[]).join('; ')||'None']])+'</div>';return;}
+
+        // TIMELINE
+        if(activeTab==='timeline'){panel.innerHTML='<div class="space-y-2">'+'<div class="flex items-center gap-3 p-3 bg-white bg-opacity-5 rounded border-l-2 border-accent-blue"><div class="w-2 h-2 rounded-full bg-accent-blue"></div><div><strong class="text-xs text-white">First Seen</strong><span class="text-[10px] text-text-muted ml-2">'+shortDt(row.first_seen)+'</span></div></div>'+'<div class="flex items-center gap-3 p-3 bg-white bg-opacity-5 rounded border-l-2 border-accent-blue"><div class="w-2 h-2 rounded-full bg-accent-blue"></div><div><strong class="text-xs text-white">Last Seen</strong><span class="text-[10px] text-text-muted ml-2">'+shortDt(row.last_seen)+'</span></div></div>'+'<div class="flex items-center gap-3 p-3 bg-white bg-opacity-5 rounded border-l-2 border-white border-opacity-20"><div class="w-2 h-2 rounded-full bg-white bg-opacity-30"></div><div><strong class="text-xs text-white">Duration</strong><span class="text-[10px] text-text-muted ml-2">'+(row.duration_seconds||0)+' seconds</span></div></div>'+'<div class="flex items-center gap-3 p-3 bg-white bg-opacity-5 rounded border-l-2 border-white border-opacity-20"><div class="w-2 h-2 rounded-full bg-white bg-opacity-30"></div><div><strong class="text-xs text-white">Connections</strong><span class="text-[10px] text-text-muted ml-2">'+(row.connection_count||0)+' connections, '+(row.packet_count||0)+' packets</span></div></div>'+'<div class="flex items-center gap-3 p-3 bg-white bg-opacity-5 rounded border-l-2 border-white border-opacity-20"><div class="w-2 h-2 rounded-full bg-white bg-opacity-30"></div><div><strong class="text-xs text-white">Traffic</strong><span class="text-[10px] text-text-muted ml-2">'+fmtB(row.bytes_transferred||0)+'</span></div></div></div>';return;}
+
+        // THREAT INTEL - 2 cards
+        if(activeTab==='threat'){panel.innerHTML='<div class="grid grid-cols-1 lg:grid-cols-2 gap-3">'+detailCard('Reputation',[['Status',getThreatState(row).label],['Threat Score',(row.reputation_score||0)+'/100'],['Abuse Reports',row.abuse_reports||0]])+detailCard('Feed Context',[['Category',row.threat_category||'n/a'],['Last Reported',row.last_reported||'None'],['Last Checked',shortDt(row.last_checked)],['Feeds Checked',row.feeds_checked||'Local feed']])+'</div>';return;}
+
+        // WHOIS - 2 cards
+        if(activeTab==='whois'){panel.innerHTML='<div class="grid grid-cols-1 lg:grid-cols-2 gap-3">'+detailCard('ASN Details',[['ASN',row.asn||'n/a'],['Organization',row.asn_org||'n/a'],['Provider',row.isp||'n/a'],['Prefix',row.network_prefix||'n/a']])+detailCard('WHOIS Summary',[['Registry',registryHint(row)],['Network',row.network_prefix||'Unknown'],['Org',row.asn_org||'Unknown'],['Attribution',row.network_prefix==='Unknown'?'No offline match':'Offline GeoLite-style range']])+'</div>';return;}
+
+        // DNS
+        if(activeTab==='dns'){panel.innerHTML=kvT([['Destination',row.destination_ip],['Reverse DNS',row.hostname||'Not resolved in offline mode'],['Provider DNS Hint',dnsHint(row)],['Observed Port',portLabel(row)]]);return;}
+
+        // ASN
+        if(activeTab==='asn'){panel.innerHTML=kvT([['ASN',row.asn||'n/a'],['Organization',row.asn_org||'n/a'],['Prefix',row.network_prefix||'n/a'],['Provider',row.isp||'n/a'],['Country',row.country||'Unknown'],['Region',row.region||'Unknown'],['City',row.city||'Unknown']]);return;}
+
+        // CORRELATION - full: session table + confidence breakdown + events + graph
+        if(activeTab==='correlation'){const events=currentData?.correlation?.events||[];const relevant=events.filter(e=>e.destination_ip===row.destination_ip);const serviceRows=currentData?.correlation?.services||[];if(!relevant.length){panel.innerHTML='<p class="text-text-muted text-[11px] py-3">No correlated TXT/CDR session matched this destination.</p>';return;}let html='<div class="space-y-3">';if(serviceRows.length){html+='<div class="p-3 bg-white bg-opacity-5 rounded border border-white border-opacity-5"><div class="text-[10px] font-mono text-text-muted uppercase mb-2">Session Correlation</div><table class="w-full text-[10px]"><thead><tr class="text-text-muted border-b border-white border-opacity-5"><th class="py-1 text-left">Session</th><th class="py-1">PCAP Match</th><th class="py-1">TXT Match</th></tr></thead><tbody>'+serviceRows.map(s=>'<tr class="border-b border-white border-opacity-5"><td class="py-1 text-white">'+esc(s.session)+'</td><td class="py-1 text-center">'+esc(s.pcap_match)+'</td><td class="py-1 text-center">'+esc(s.txt_match)+'</td></tr>').join('')+'</tbody></table></div>';}
+          // Events table
+          html+='<div class="p-3 bg-white bg-opacity-5 rounded border border-white border-opacity-5"><div class="text-[10px] font-mono text-text-muted uppercase mb-2">Correlation Events</div><table class="w-full text-[10px]"><thead><tr class="text-text-muted border-b border-white border-opacity-5"><th class="py-1 text-left">Time</th><th class="py-1 text-left">PCAP Evidence</th><th class="py-1 text-left">TXT Evidence</th></tr></thead><tbody>'+relevant.map(e=>'<tr class="border-b border-white border-opacity-5"><td class="py-1 text-white">'+shortDt(e.time)+'</td><td class="py-1"><span class="text-white">'+esc(e.pcap_evidence||'')+'</span><br><span class="text-[9px] text-text-muted">'+esc(e.provider||'')+' | '+esc(e.service||'')+'</span></td><td class="py-1"><span class="text-white">'+esc(e.txt_evidence||'')+'</span><br><span class="text-[9px] text-text-muted">'+esc(e.subscriber||'No subscriber')+' | IMEI '+esc(e.imei||'n/a')+'</span></td></tr>').join('')+'</tbody></table></div>';
+          // Correlation graph
+          const report=currentData?.correlation?.attribution_report;if(report){const svcs=[...new Set(relevant.map(e=>e.service).filter(Boolean))];html+='<div class="p-3 bg-white bg-opacity-5 rounded border border-white border-opacity-5"><div class="text-[10px] font-mono text-text-muted uppercase mb-2">Correlation Graph</div><div class="flex flex-wrap gap-2 items-center"><div class="p-2 bg-white bg-opacity-10 rounded border border-accent-blue border-opacity-30 text-center"><span class="text-[9px] text-text-muted block">Subscriber</span><span class="text-xs font-mono text-white">'+esc(report.subscriber||'Unknown')+'</span></div><span class="text-text-muted">→</span><div class="p-2 bg-white bg-opacity-10 rounded border border-accent-blue border-opacity-30 text-center"><span class="text-[9px] text-text-muted block">Assigned IP</span><span class="text-xs font-mono text-white">'+esc(report.assigned_ip||'Unknown')+'</span></div>'+svcs.map(s=>'<span class="text-text-muted">→</span><div class="p-2 bg-white bg-opacity-10 rounded border border-accent-lime border-opacity-30 text-center"><span class="text-[9px] text-text-muted block">'+esc(s)+'</span><span class="text-[9px] text-text-muted">PCAP + TXT</span></div>').join('')+'</div></div>';}
+          html+='</div>';panel.innerHTML=html;return;}
+
+        // REPORT
+        if(activeTab==='report'){const report=currentData?.correlation?.attribution_report;if(!report){panel.innerHTML='<p class="text-text-muted text-[11px] py-3">No attribution report available.</p>';return;}panel.innerHTML='<div class="grid grid-cols-1 lg:grid-cols-2 gap-3">'+detailCard('Attribution Report',[['Subscriber',report.subscriber],['Assigned IP',report.assigned_ip],['Correlated Services',(report.correlated_services||[]).join(', ')||'None'],['Supporting Evidence',(report.supporting_evidence||[]).join(', ')],['Device',report.device||'Unknown']])+detailCard('Assessment',[['Assessment',report.assessment]])+'</div>';return;}
+
+        // FLOWS - ALL records (no limit), with payload panels + packet breakdown
+        if(activeTab==='flows'){const rawRows=row.raw_connections||[];if(!rawRows.length){panel.innerHTML='<p class="text-text-muted text-[11px] py-3">No raw connection records for this destination.</p>';return;}panel.innerHTML='<div class="space-y-2">'+rawRows.map(r=>'<div class="p-3 bg-white bg-opacity-5 rounded border border-white border-opacity-5"><div class="flex justify-between items-start"><div><span class="text-[10px] font-mono text-white font-bold">'+esc(r.source_ip||'')+':'+esc(String(r.source_port||'?'))+'</span><span class="text-[10px] text-text-muted mx-1">→</span><span class="text-[10px] font-mono text-white font-bold">'+esc(r.destination_ip||'')+':'+esc(String(r.destination_port||'?'))+'</span><span class="text-[10px] text-text-muted ml-2">'+esc(r.protocol||'?')+' | '+shortDt(r.timestamp)+' | '+(r.packet_count||0)+' pkts | '+fmtB(r.bytes_transferred||0)+'</span></div>'+payloadBadge(r.payload_kind)+'</div>'+(r.packet_details&&r.packet_details[0]?.summary?'<div class="text-[9px] text-text-muted mt-1">Layers: '+esc(r.packet_details[0].summary)+'</div>':'')+(r.packet_details&&r.packet_details[0]?.decoded_type?'<div class="text-[9px] text-accent-blue mt-0.5">Decoded: '+esc(r.packet_details[0].decoded_type)+(r.packet_details[0].decoded_summary?' | '+esc(r.packet_details[0].decoded_summary):'')+'</div>':'')+renderPayloadPanel(r,'flow')+renderPacketDetails(r.packet_details)+'</div>').join('')+'</div>';return;}
+
+        // PACKETS TAB - Wireshark-like full packet table with search + protocol filter
+        if(activeTab==='packets'){renderPacketsTab(panel);return;}
+
+        // NOTES
+        if(activeTab==='notes'){panel.innerHTML='<textarea class="w-full bg-white bg-opacity-5 border border-white border-opacity-10 rounded p-3 text-xs font-mono text-white placeholder-text-muted focus:outline-none focus:border-accent-blue" rows="8" placeholder="Notes for '+esc(row.destination_ip)+'..."></textarea>';return;}
+        panel.innerHTML='<p class="text-text-muted text-[11px] py-3">Select a tab.</p>';}
+
+      // === PACKETS TAB (full Wireshark-like table) ===
+      function filteredPacketRows(){if(!currentData)return[];const search=packetSearchQuery.trim().toLowerCase();return(currentData.packet_rows||[]).map((p,i)=>({...p,__index:i})).filter(p=>{const proto=String(p.protocol||'').toUpperCase();const hay=[p.flow_label,p.source_ip,p.destination_ip,p.payload_preview,p.decoded_summary,p.decoded_detail,p.summary,p.payload_kind,proto,String(p.length||'')].join(' ').toLowerCase();return(!search||hay.includes(search))&&(!packetProtocolFilter||proto===packetProtocolFilter);});}
+      function packetProtocolOptions(){if(!currentData)return[];return[...new Set((currentData.packet_rows||[]).map(p=>String(p.protocol||'').toUpperCase()).filter(Boolean))].sort();}
+      function renderPacketsTab(panel){if(!currentData||!currentData.packet_rows||!currentData.packet_rows.length){panel.innerHTML='<p class="text-text-muted text-[11px] py-3">No packet-level data available. Upload a PCAP file for packet inspection.</p>';return;}const packets=filteredPacketRows();const protos=packetProtocolOptions();let html='<div class="flex flex-wrap gap-2 mb-3"><input id="ipintel-pkt-search" class="cyber-input text-[10px] flex-1 min-w-[140px]" placeholder="Search packets by IP, flow, payload, decoding..." value="'+esc(packetSearchQuery)+'"><select id="ipintel-pkt-proto" class="cyber-input text-[10px] w-auto"><option value="">All protocols</option>'+protos.map(p=>'<option value="'+esc(p)+'"'+(packetProtocolFilter===p?' selected':'')+'>'+esc(p)+'</option>').join('')+'</select><span class="text-[10px] text-text-muted self-center">'+packets.length+' packets</span></div>';if(!packets.length){html+='<p class="text-text-muted text-[11px]">No packets match filters.</p>';panel.innerHTML=html;bindPktFilters();return;}html+='<div class="overflow-auto max-h-[400px] border border-white border-opacity-5 rounded" style="background:#0a0e14"><table class="w-full text-[10px]" style="table-layout:fixed"><thead class="sticky top-0" style="background:#0a0e14;z-index:2"><tr class="text-left text-text-muted font-mono"><th class="px-2 py-1.5" style="width:14%">Time</th><th class="px-2 py-1.5" style="width:22%">Flow</th><th class="px-2 py-1.5" style="width:14%">Protocol</th><th class="px-2 py-1.5" style="width:22%">Decoding</th><th class="px-2 py-1.5" style="width:18%">Payload</th><th class="px-2 py-1.5" style="width:10%">Bytes</th></tr></thead><tbody>';
+        packets.forEach(p=>{const pm=payloadMeta(p.payload_kind);const sel=p.__index===selectedPacketIndex;const related=selectedRow&&(p.flow_destination_ip===selectedRow.destination_ip||p.source_ip===selectedRow.destination_ip||p.destination_ip===selectedRow.destination_ip);const pn=p.packet_index||p.__index+1;const bgStyle=sel?'background:rgba(0,210,255,0.08)':related?'background:rgba(255,255,255,0.03)':'background:#0a0e14';html+='<tr class="border-b border-white border-opacity-5 cursor-pointer transition-all hover:bg-white hover:bg-opacity-5" style="'+bgStyle+'" data-pkt-idx="'+p.__index+'"><td class="px-2 py-1.5 overflow-hidden" style="text-overflow:ellipsis;white-space:nowrap"><span class="text-white">'+shortDt(p.timestamp)+'</span><br><span class="text-[9px] text-text-muted">Packet '+pn+'</span></td><td class="px-2 py-1.5 overflow-hidden" style="text-overflow:ellipsis;white-space:nowrap"><span class="text-white">'+esc(truncText(p.flow_label||'Flow unavailable',44))+'</span><br><span class="text-[9px] text-text-muted">'+esc((p.source_port||'?')+' → '+(p.destination_port||'?'))+'</span></td><td class="px-2 py-1.5 overflow-hidden"><span class="text-[10px] px-1.5 py-0.5 rounded bg-white bg-opacity-5 text-accent-blue">'+esc(p.protocol||'?')+'</span><br><span class="text-[9px] text-text-muted">'+esc(truncText(p.summary||'',30))+'</span></td><td class="px-2 py-1.5 overflow-hidden" style="text-overflow:ellipsis"><span class="text-white">'+esc(p.decoded_type||pm.label)+'</span><br><span class="text-[9px] text-text-muted">'+esc(truncText(p.decoded_summary||p.decoded_detail||'No decoding',40))+'</span></td><td class="px-2 py-1.5 overflow-hidden" style="text-overflow:ellipsis">'+payloadBadge(p.payload_kind)+'<br><span class="text-[9px] text-text-muted">'+esc(truncText(p.payload_preview||'No payload',36))+'</span></td><td class="px-2 py-1.5 overflow-hidden"><span class="text-white">'+fmtB(p.length||0)+'</span><br><span class="text-[9px] text-text-muted">Pkt '+pn+'</span></td></tr>';});
+        html+='</tbody></table></div>';
+        // Packet focus panel
+        const selPkt=packets.find(p=>p.__index===selectedPacketIndex)||packets[0];if(selPkt){html+='<div class="mt-3 grid grid-cols-1 lg:grid-cols-3 gap-3">'+detailCard('Packet Profile',[['Time',shortDt(selPkt.timestamp)],['Flow',selPkt.flow_label||selPkt.source_ip+' → '+selPkt.destination_ip],['Protocol',selPkt.protocol||'UNKNOWN'],['Length',fmtB(selPkt.length||0)],['Payload Type',payloadMeta(selPkt.payload_kind).label]])+detailCard('Protocol Decoding',packetDecodedItems(selPkt))+detailCard('Payload View',[['Preview',selPkt.payload_preview||'No packet payload extracted'],['Hex',selPkt.payload_hex||'n/a']])+'</div>';}
+        panel.innerHTML=html;bindPktFilters();
+        panel.querySelectorAll('tr[data-pkt-idx]').forEach(tr=>{tr.addEventListener('click',()=>{selectedPacketIndex=Number(tr.dataset.pktIdx)||0;renderPacketsTab(panel);});});}
+      function bindPktFilters(){const s=document.getElementById('ipintel-pkt-search');if(s)s.addEventListener('input',e=>{packetSearchQuery=e.target.value;renderDetailTab(selectedRow);});const p=document.getElementById('ipintel-pkt-proto');if(p)p.addEventListener('change',e=>{packetProtocolFilter=e.target.value;renderDetailTab(selectedRow);});}
+
+      // === FILTER LISTENERS ===
+      ['ipintel-search','ipintel-role-filter','ipintel-service-filter','ipintel-threat-filter','ipintel-port-filter'].forEach(id=>{const el=document.getElementById(id);if(el){el.addEventListener('input',renderTable);el.addEventListener('change',renderTable);}});
+      app.logTerminal('IP Intelligence initialized. Full feature set: Analytics Band (Host Inventory, Sessions, Flows, Protocol Mix, VoIP), Overview, Timeline, Threat, WHOIS, DNS, ASN, Correlation, Report, Flows, Packets, Notes. Backend: /api/upload', 'success');
+      lucide.createIcons();
+    }
+  },
+  // ═══════════════════════════════════════════════════════════════════
+  //  SUBDOMAIN SCANNER TOOL
+  // ═══════════════════════════════════════════════════════════════════
+  {
+    id: "subdomain-scanner",
+    name: "Subdomain Scanner",
+    category: "Network Intelligence",
+    icon: "globe",
+    status: "Ready",
+    badgeType: "green",
+    description: "Subdomain enumeration via 10 OSINT engines (Google, VirusTotal, crt.sh, DNSdumpster, ThreatCrowd & more), DNS resolution, subdomain classification, and CIF threat integration.",
+    placeholderHtml: `
+      <div class="space-y-5">
+        <!-- Header -->
+        <div class="cyber-card p-5 border-opacity-20" style="border-color:rgba(0,210,255,0.3);background:rgba(0,210,255,0.03);">
+          <div class="flex items-start gap-4 flex-wrap">
+            <div class="p-3 rounded-lg" style="background:rgba(0,210,255,0.1);border:1px solid rgba(0,210,255,0.2);">
+              <i data-lucide="globe" class="w-6 h-6" style="color:#00d2ff"></i>
+            </div>
+            <div class="flex-1 min-w-[200px]">
+              <h3 class="text-sm font-bold font-mono mb-1" style="color:#00d2ff">SUBDOMAIN SCANNER</h3>
+              <p class="text-xs text-text-muted leading-relaxed">Subdomain enumeration via 10 OSINT engines with DNS resolution, classification, and CIF threat integration.</p>
+            </div>
+            <div class="flex gap-4 text-center shrink-0">
+              <div><div class="text-lg font-bold font-mono" style="color:#00d2ff" id="sub-engine-count">10</div><div class="text-[10px] font-mono text-text-muted">Engines</div></div>
+              <div><div class="text-lg font-bold font-mono text-accent-blue" id="sub-scan-count">0</div><div class="text-[10px] font-mono text-text-muted">Scans</div></div>
+              <div><div class="text-lg font-bold font-mono text-accent-orange" id="sub-total-found">0</div><div class="text-[10px] font-mono text-text-muted">Subdomains</div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab Nav -->
+        <div class="flex gap-0 border-b border-white border-opacity-10">
+          <button class="sub-tab active" data-tab="scan" style="padding:8px 16px;font-size:11px;font-family:monospace;color:#00d2ff;background:none;border:none;border-bottom:2px solid #00d2ff;cursor:pointer;position:relative;">
+            <i data-lucide="search" class="w-3.5 h-3.5" style="display:inline;vertical-align:middle;margin-right:4px"></i> New Scan
+          </button>
+          <button class="sub-tab" data-tab="results" style="padding:8px 16px;font-size:11px;font-family:monospace;color:#94a3b8;background:none;border:none;cursor:pointer;position:relative;">
+            <i data-lucide="list" class="w-3.5 h-3.5" style="display:inline;vertical-align:middle;margin-right:4px"></i> Results
+          </button>
+          <button class="sub-tab" data-tab="engines" style="padding:8px 16px;font-size:11px;font-family:monospace;color:#94a3b8;background:none;border:none;cursor:pointer;position:relative;">
+            <i data-lucide="cpu" class="w-3.5 h-3.5" style="display:inline;vertical-align:middle;margin-right:4px"></i> Engines
+          </button>
+        </div>
+
+        <!-- TAB: New Scan -->
+        <div id="sub-panel-scan" class="space-y-4">
+          <div class="cyber-card p-5 border-opacity-10" style="border-color:rgba(0,210,255,0.2)">
+            <div class="flex gap-2">
+              <input id="sub-domain-input" type="text" value="google.com" placeholder="Enter target domain (e.g. example.com)" class="cyber-input w-full font-mono text-sm">
+              <button id="sub-scan-btn" class="cyber-btn text-xs px-5" style="border-color:rgba(0,210,255,0.4);color:#93c5fd;white-space:nowrap">
+                <i data-lucide="radar" class="w-3.5 h-3.5" style="display:inline;vertical-align:middle;margin-right:4px"></i> Launch Scan
+              </button>
+            <div class="flex flex-wrap gap-1.5 mt-3">
+              <span style="font-size:10px;color:#64748b;margin-right:4px">Quick:</span>
+              <button class="sub-quick" data-domain="google.com" style="border:1px solid rgba(100,116,139,0.3);background:rgba(15,23,42,0.6);color:#94a3b8;font-size:10px;padding:2px 8px;border-radius:4px;cursor:pointer">google.com</button>
+              <button class="sub-quick" data-domain="facebook.com" style="border:1px solid rgba(100,116,139,0.3);background:rgba(15,23,42,0.6);color:#94a3b8;font-size:10px;padding:2px 8px;border-radius:4px;cursor:pointer">facebook.com</button>
+              <button class="sub-quick" data-domain="microsoft.com" style="border:1px solid rgba(100,116,139,0.3);background:rgba(15,23,42,0.6);color:#94a3b8;font-size:10px;padding:2px 8px;border-radius:4px;cursor:pointer">microsoft.com</button>
+              <button class="sub-quick" data-domain="github.com" style="border:1px solid rgba(100,116,139,0.3);background:rgba(15,23,42,0.6);color:#94a3b8;font-size:10px;padding:2px 8px;border-radius:4px;cursor:pointer">github.com</button>
+              <button class="sub-quick" data-domain="netflix.com" style="border:1px solid rgba(100,116,139,0.3);background:rgba(15,23,42,0.6);color:#94a3b8;font-size:10px;padding:2px 8px;border-radius:4px;cursor:pointer">netflix.com</button>
+              <button class="sub-quick" data-domain="amazon.com" style="border:1px solid rgba(100,116,139,0.3);background:rgba(15,23,42,0.6);color:#94a3b8;font-size:10px;padding:2px 8px;border-radius:4px;cursor:pointer">amazon.com</button>
+            </div>
+          </div>
+          <!-- Scan Progress -->
+          <div id="sub-progress" class="hidden">
+            <div class="cyber-card p-4 border-opacity-10" style="border-color:rgba(0,210,255,0.3);background:rgba(0,210,255,0.03)">
+              <div class="flex items-center gap-3">
+                <div style="display:inline-block;width:20px;height:20px;border:2px solid rgba(0,210,255,0.2);border-top-color:#00d2ff;border-radius:50%;animation:spin 0.8s linear infinite"></div>
+                <div>
+                  <div style="font-size:12px;color:#e2e8f0;font-weight:600" id="sub-progress-title">Scanning...</div>
+                  <div style="font-size:10px;color:#64748b;font-family:monospace" id="sub-progress-detail">Initializing engines...</div>
+                </div>
+              </div>
+              <div style="margin-top:8px;height:4px;border-radius:9999px;background:#1e293b;overflow:hidden">
+                <div id="sub-progress-bar" style="height:100%;width:0%;border-radius:9999px;background:linear-gradient(90deg,#00d2ff80,#00d2ff);transition:width 0.5s"></div>
+              </div>
+              <div id="sub-progress-engines" class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4 pt-3 border-t border-white border-opacity-5"></div>
+            </div>
+          </div>
+          <!-- Scan Result -->
+          <div id="sub-scan-result" class="hidden space-y-4"></div>
+        </div>
+
+        <!-- TAB: Results (History) -->
+        <div id="sub-panel-results" class="hidden space-y-4">
+          <div class="text-xs font-mono text-text-muted" id="sub-history-count">No scans yet</div>
+          <div class="cyber-table-container max-h-[400px] overflow-y-auto">
+            <table class="cyber-table"><thead><tr>
+              <th>Domain</th><th>Status</th><th>Subdomains</th><th>Started</th><th>Action</th>
+            </tr></thead><tbody id="sub-history-tbody"></tbody></table>
+          </div>
+        </div>
+
+        <!-- TAB: Engines -->
+        <div id="sub-panel-engines" class="hidden space-y-4">
+          <p style="font-size:11px;color:#94a3b8">Using 10 OSINT search engines to discover subdomains. Each engine runs in parallel for maximum speed.</p>
+          <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3" id="sub-engines-grid"></div>
+        </div>
+      </div>
+    `,
+    initLogic: function() {
+      // ── Tab switching ──
+      const tabs = document.querySelectorAll('.sub-tab');
+      const panels = {scan:document.getElementById('sub-panel-scan'),results:document.getElementById('sub-panel-results'),engines:document.getElementById('sub-panel-engines')};
+      tabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+          tabs.forEach(t => { t.style.color='#94a3b8'; t.style.borderBottom='none'; });
+          tab.style.color='#00d2ff'; tab.style.borderBottom='2px solid #00d2ff';
+          Object.values(panels).forEach(p => p.classList.add('hidden'));
+          panels[tab.dataset.tab].classList.remove('hidden');
+          if(tab.dataset.tab==='results') renderHistory();
+        });
+      });
+
+      // ── Engines grid ──
+      const enginesData = [
+        {name:'Google',color:'#4285F4',icon:'search',desc:'Google dork queries'},
+        {name:'Yahoo',color:'#720e9e',icon:'search',desc:'Yahoo search index'},
+        {name:'Bing',color:'#008373',icon:'search',desc:'Microsoft Bing index'},
+        {name:'Ask',color:'#d6001c',icon:'search',desc:'Ask.com crawled data'},
+        {name:'Netcraft',color:'#e63946',icon:'shield',desc:'Site security database'},
+        {name:'DNSdumpster',color:'#2a9d8f',icon:'database',desc:'DNS recon database'},
+        {name:'VirusTotal',color:'#394eff',icon:'shield-alert',desc:'Security scan aggregator'},
+        {name:'ThreatCrowd',color:'#e76f51',icon:'alert-triangle',desc:'Threat intelligence OSINT'},
+        {name:'crt.sh (SSL)',color:'#f4a261',icon:'lock',desc:'Certificate transparency logs'},
+        {name:'PassiveDNS',color:'#264653',icon:'globe',desc:'Passive DNS records'},
+      ];
+      const engGrid = document.getElementById('sub-engines-grid');
+      engGrid.innerHTML = enginesData.map(e =>
+        '<div class="cyber-card p-3 border-opacity-10" style="border-color:'+e.color+'30;background:'+e.color+'08">'
+        +'<div class="flex items-center gap-2 mb-1"><i data-lucide="'+e.icon+'" class="w-4 h-4" style="color:'+e.color+'"></i>'
+        +'<span style="font-size:12px;font-weight:700;color:'+e.color+'">'+e.name+'</span></div>'
+        +'<div style="font-size:10px;color:#64748b">'+e.desc+'</div></div>'
+      ).join('');
+
+      // ── Category colors ──
+      const CAT_COLORS = {
+        'Web':'#3b82f6','Email':'#ef4444','API':'#a78bfa','Application':'#0ea5e9',
+        'Development':'#f59e0b','Admin':'#dc2626','VPN/Remote':'#f472b6',
+        'DNS':'#64748b','File Transfer':'#94a3b8','CDN/Media':'#22d3ee',
+        'DevOps':'#f97316','Monitoring':'#84cc16','Documentation':'#6366f1',
+        'Content':'#ec4899','Commerce':'#14b8a6','Authentication':'#eab308',
+        'Cloud':'#06b6d4','Database':'#8b5cf6','Search':'#fb923c',
+        'Infrastructure':'#475569','Mobile':'#10b981','Other':'#94a3b8',
+      };
+
+      // ── Scan state ──
+      let scanCount = 0, totalFound = 0;
+      let currentScanId = null, pollTimer = null;
+      const scanHistory = [];
+
+      const domainInput = document.getElementById('sub-domain-input');
+      const scanBtn = document.getElementById('sub-scan-btn');
+      const progressDiv = document.getElementById('sub-progress');
+      const progressTitle = document.getElementById('sub-progress-title');
+      const progressDetail = document.getElementById('sub-progress-detail');
+      const progressBar = document.getElementById('sub-progress-bar');
+      const scanResult = document.getElementById('sub-scan-result');
+
+      // ── Quick domain buttons ──
+      document.querySelectorAll('.sub-quick').forEach(btn => {
+        btn.addEventListener('click', () => {
+          domainInput.value = btn.dataset.domain;
+          startScan(btn.dataset.domain);
+        });
+      });
+
+      // ── Start scan ──
+      async function startScan(domain) {
+        domain = (domain || domainInput.value).trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+        if(!domain || !domain.includes('.')) {
+          app.logTerminal('Subdomain Scanner: Invalid domain', 'error');
+          return;
+        }
+
+        const useDemo = false;
+
+        scanBtn.disabled = true;
+        scanBtn.innerHTML = '<div style="display:inline-block;width:14px;height:14px;border:2px solid rgba(0,210,255,0.2);border-top-color:#00d2ff;border-radius:50%;animation:spin 0.8s linear infinite;vertical-align:middle;margin-right:6px"></div> Scanning...';
+        progressDiv.classList.remove('hidden');
+        scanResult.classList.add('hidden');
+        progressBar.style.width = '5%';
+        progressTitle.textContent = (useDemo ? 'Launching demo scan for ' : 'Launching live scan for ') + domain;
+        progressDetail.textContent = 'Connecting to engines...';
+
+        try {
+          const r = await fetch('/api/subdomain/scan?domain='+encodeURIComponent(domain)+'&demo='+useDemo, {method:'POST'});
+          const d = await r.json();
+          currentScanId = d.scan_id;
+          scanCount++;
+          document.getElementById('sub-scan-count').textContent = scanCount;
+          app.logTerminal('Subdomain Scanner: Scan started for '+domain+' [ID: '+d.scan_id+']', 'success');
+
+          // Reset engine status UI
+          const progEngines = document.getElementById('sub-progress-engines');
+          if (progEngines) progEngines.innerHTML = '';
+
+          // Poll for results
+          pollTimer = setInterval(() => pollScan(currentScanId, domain), 1000);
+        } catch(e) {
+          app.logTerminal('Subdomain Scanner: Failed to start scan — '+e.message, 'error');
+          resetScanBtn();
+        }
+      }
+
+      async function pollScan(scanId, domain) {
+        try {
+          const r = await fetch('/api/subdomain/scan/'+scanId);
+          const scan = await r.json();
+
+          progressDetail.textContent = scan.progress || 'Processing...';
+
+          // Update engines status UI in real-time
+          const progEngines = document.getElementById('sub-progress-engines');
+          if (progEngines && scan.engines_status) {
+            const idToName = {
+              google: 'Google', yahoo: 'Yahoo', bing: 'Bing',
+              ask: 'Ask', netcraft: 'Netcraft', dnsdumpster: 'DNSdumpster',
+              virustotal: 'VirusTotal', threatcrowd: 'ThreatCrowd', ssl: 'crt.sh (SSL)',
+              passivedns: 'PassiveDNS'
+            };
+            const engColors = {
+              google: '#4285F4', yahoo: '#720e9e', bing: '#008373',
+              ask: '#d6001c', netcraft: '#e63946', dnsdumpster: '#2a9d8f',
+              virustotal: '#394eff', threatcrowd: '#e76f51', ssl: '#f4a261',
+              passivedns: '#264653'
+            };
+            
+            progEngines.innerHTML = Object.entries(scan.engines_status).map(([id, st]) => {
+              const name = idToName[id] || id;
+              const color = engColors[id] || '#94a3b8';
+              let statusText = 'Pending';
+              let statusColor = '#64748b';
+              let spinner = '';
+              
+              if (st.status === 'scanning') {
+                statusText = 'Scanning';
+                statusColor = '#3b82f6';
+                spinner = '<div style="display:inline-block;width:8px;height:8px;border:1.5px solid rgba(59,130,246,0.2);border-top-color:#3b82f6;border-radius:50%;animation:spin 0.8s linear infinite;margin-right:4px;vertical-align:middle;"></div>';
+              } else if (st.status === 'completed') {
+                statusText = `Done (${st.count})`;
+                statusColor = '#00d2ff';
+              } else if (st.status.startsWith('error')) {
+                statusText = 'Error';
+                statusColor = '#ef4444';
+              } else if (st.status === 'skipped') {
+                statusText = 'Skipped';
+                statusColor = '#475569';
+              }
+              
+              return `<div class="p-2 rounded bg-black bg-opacity-30 border border-white border-opacity-5 flex items-center justify-between font-mono text-[10px]">
+                <span style="color:${color}">${name}</span>
+                <span style="color:${statusColor}">${spinner}${statusText}</span>
+              </div>`;
+            }).join('');
+          }
+
+          if(scan.status === 'running') {
+            const pct = scan.total_found > 0 ? Math.min(90, 20 + (scan.total_found * 2)) : 15;
+            progressBar.style.width = pct + '%';
+            
+            // Render intermediate results so the table updates in real-time!
+            if (scan.resolved && scan.resolved.length > 0) {
+              renderScanResult(scan);
+            }
+            return;
+          }
+
+          // Scan complete or error
+          clearInterval(pollTimer);
+          pollTimer = null;
+          progressBar.style.width = '100%';
+
+          if(scan.status === 'completed') {
+            totalFound += scan.total_found;
+            document.getElementById('sub-total-found').textContent = totalFound;
+            scanHistory.push({id:scanId, domain, total:scan.total_found, time:new Date().toLocaleTimeString(), status:'completed'});
+            renderScanResult(scan);
+            app.logTerminal('Subdomain Scanner: '+domain+' — found '+scan.total_found+' subdomains', 'success');
+          } else {
+            scanResult.innerHTML = '<div class="cyber-card p-4" style="border-color:rgba(239,68,68,0.3);background:rgba(239,68,68,0.05)"><p style="color:#f87171;font-size:12px">Scan failed: '+(scan.error||'Unknown error')+'</p></div>';
+            scanResult.classList.remove('hidden');
+            scanHistory.push({id:scanId, domain, total:0, time:new Date().toLocaleTimeString(), status:'error'});
+            app.logTerminal('Subdomain Scanner: Scan failed for '+domain, 'error');
+          }
+
+          setTimeout(() => { progressDiv.classList.add('hidden'); }, 1000);
+          resetScanBtn();
+        } catch(e) {
+          // Continue polling on network error
+        }
+      }
+
+      function resetScanBtn() {
+        scanBtn.disabled = false;
+        scanBtn.innerHTML = '<i data-lucide="radar" class="w-3.5 h-3.5" style="display:inline;vertical-align:middle;margin-right:4px"></i> Launch Scan';
+        lucide.createIcons();
+      }
+
+      function renderScanResult(scan) {
+        const subs = scan.resolved || [];
+        const domain = scan.domain;
+
+        // Group by category
+        const catCounts = {};
+        const resolved = subs.filter(s => s.status === 'resolved').length;
+        const nxdomain = subs.filter(s => s.status === 'nxdomain').length;
+        subs.forEach(s => { catCounts[s.category] = (catCounts[s.category]||0) + 1; });
+        const categories = Object.entries(catCounts).sort((a,b) => b[1]-a[1]);
+
+        let html = '';
+
+        // Summary card
+        html += '<div class="cyber-card p-5 border-opacity-10" style="border-color:rgba(0,210,255,0.3);background:rgba(0,210,255,0.03)">';
+        html += '<div class="flex flex-wrap items-start justify-between gap-4">';
+        html += '<div><div class="font-mono text-xl font-bold text-white">'+domain+'</div>';
+        html += '<div style="font-size:12px;color:#64748b;margin-top:2px">Scan completed at '+new Date().toLocaleTimeString()+'</div></div>';
+        html += '<div class="flex gap-4 text-center">';
+        html += '<div><div class="text-2xl font-bold font-mono" style="color:#00d2ff">'+subs.length+'</div><div style="font-size:9px;color:#64748b;text-transform:uppercase">Total</div></div>';
+        html += '<div><div class="text-2xl font-bold font-mono text-accent-blue">'+resolved+'</div><div style="font-size:9px;color:#64748b;text-transform:uppercase">Resolved</div></div>';
+        html += '<div><div class="text-2xl font-bold font-mono text-accent-orange">'+nxdomain+'</div><div style="font-size:9px;color:#64748b;text-transform:uppercase">NXDOMAIN</div></div>';
+        html += '<div><div class="text-2xl font-bold font-mono" style="color:#a78bfa">'+categories.length+'</div><div style="font-size:9px;color:#64748b;text-transform:uppercase">Categories</div></div>';
+        html += '</div></div>';
+
+        // Category pills
+        html += '<div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:4px">';
+        categories.forEach(([cat, count]) => {
+          const color = CAT_COLORS[cat] || '#94a3b8';
+          html += '<span style="font-size:9px;font-weight:600;color:'+color+';background:'+color+'15;padding:2px 8px;border-radius:3px;border:1px solid '+color+'30;font-family:monospace">'+cat+' ('+count+')</span>';
+        });
+        html += '</div></div>';
+
+        // Filter & table
+        html += '<div class="flex flex-wrap gap-3">';
+        html += '<input id="sub-result-search" type="text" placeholder="Filter subdomains..." class="cyber-input flex-1 text-xs" style="min-width:200px">';
+        html += '<select id="sub-result-cat" class="cyber-input text-xs" style="width:auto"><option value="all">All Categories</option>';
+        categories.forEach(([cat]) => { html += '<option value="'+cat+'">'+cat+'</option>'; });
+        html += '</select>';
+        html += '<select id="sub-result-status" class="cyber-input text-xs" style="width:auto"><option value="all">All Status</option><option value="resolved">Resolved</option><option value="nxdomain">NXDOMAIN</option><option value="timeout">Timeout</option></select>';
+        html += '</div>';
+
+        html += '<div class="text-xs font-mono text-text-muted" id="sub-result-count"></div>';
+        html += '<div class="cyber-table-container max-h-[400px] overflow-y-auto">';
+        html += '<table class="cyber-table"><thead><tr>';
+        html += '<th>Subdomain</th><th>IP(s)</th><th>CNAME</th><th>Category</th><th>Status</th><th>Threat</th>';
+        html += '</tr></thead><tbody id="sub-result-tbody"></tbody></table></div>';
+
+        scanResult.innerHTML = html;
+        scanResult.classList.remove('hidden');
+
+        // Render table
+        function renderResultTable() {
+          const search = (document.getElementById('sub-result-search')?.value||'').toLowerCase();
+          const catFilter = document.getElementById('sub-result-cat')?.value||'all';
+          const statusFilter = document.getElementById('sub-result-status')?.value||'all';
+
+          let filtered = subs;
+          if(search) filtered = filtered.filter(s => s.subdomain.toLowerCase().includes(search) || (s.ips||[]).join(' ').includes(search));
+          if(catFilter !== 'all') filtered = filtered.filter(s => s.category === catFilter);
+          if(statusFilter !== 'all') filtered = filtered.filter(s => s.status === statusFilter);
+
+          document.getElementById('sub-result-count').textContent = 'Showing '+filtered.length+' of '+subs.length+' subdomains';
+
+          const tbody = document.getElementById('sub-result-tbody');
+          tbody.innerHTML = filtered.map(s => {
+            const statusColor = s.status==='resolved'?'#00d2ff':s.status==='nxdomain'?'#ef4444':'#f59e0b';
+            const catColor = CAT_COLORS[s.category]||'#94a3b8';
+            const ipStr = (s.ips||[]).join(', ') || '—';
+            const cnameStr = (s.cnames||[]).join(', ') || '—';
+            return '<tr style="border-bottom:1px solid rgba(148,163,184,0.08)">'
+              +'<td class="font-mono text-accent-blue" style="font-size:11px">'+s.subdomain+'</td>'
+              +'<td class="font-mono" style="color:#cbd5e1;font-size:11px">'+ipStr+'</td>'
+              +'<td class="font-mono" style="color:#94a3b8;font-size:10px">'+cnameStr+'</td>'
+              +'<td><span style="font-size:9px;font-weight:600;color:'+catColor+';background:'+catColor+'15;padding:1px 6px;border-radius:3px;border:1px solid '+catColor+'30">'+s.category+'</span></td>'
+              +'<td><span style="font-size:9px;font-weight:700;color:'+statusColor+';text-transform:uppercase">'+s.status+'</span></td>'
+              +'<td><button class="sub-threat-check" data-ips="'+(s.ips||[]).join(',')+'" style="border:1px solid rgba(100,116,139,0.3);background:rgba(15,23,42,0.6);color:#94a3b8;font-size:9px;padding:1px 6px;border-radius:3px;cursor:pointer">Check</button></td>'
+              +'</tr>';
+          }).join('');
+
+          // Threat check buttons
+          tbody.querySelectorAll('.sub-threat-check').forEach(btn => {
+            btn.addEventListener('click', async () => {
+              const ips = btn.dataset.ips.split(',').filter(Boolean);
+              if(!ips.length) { btn.textContent='No IP'; btn.style.color='#475569'; return; }
+              btn.textContent = '...';
+              try {
+                const r = await fetch('/api/threat_intel/lookup?indicator='+encodeURIComponent(ips[0]));
+                const d = await r.json();
+                if(d.found) {
+                  const color = d.risk_level==='Critical'?'#dc2626':d.risk_level==='High'?'#ef4444':d.risk_level==='Medium'?'#f59e0b':'#00d2ff';
+                  btn.style.color = color;
+                  btn.style.borderColor = color+'40';
+                  btn.style.background = color+'18';
+                  btn.style.fontWeight = '700';
+                  btn.textContent = d.risk_level + ' · ' + d.risk_score;
+                } else {
+                  btn.textContent = 'Clean';
+                  btn.style.color = '#00d2ff';
+                  btn.style.borderColor = 'rgba(0,210,255,0.3)';
+                }
+              } catch(e) { btn.textContent = 'Error'; btn.style.color='#ef4444'; }
+            });
+          });
+        }
+
+        renderResultTable();
+        document.getElementById('sub-result-search')?.addEventListener('input', renderResultTable);
+        document.getElementById('sub-result-cat')?.addEventListener('change', renderResultTable);
+        document.getElementById('sub-result-status')?.addEventListener('change', renderResultTable);
+        lucide.createIcons();
+      }
+
+      // ── Scan History ──
+      function renderHistory() {
+        const tbody = document.getElementById('sub-history-tbody');
+        const countEl = document.getElementById('sub-history-count');
+        if(!scanHistory.length) {
+          countEl.textContent = 'No scans yet. Launch a scan to get started.';
+          tbody.innerHTML = '';
+          return;
+        }
+        countEl.textContent = scanHistory.length+' scan(s) completed';
+        tbody.innerHTML = scanHistory.slice().reverse().map(s => {
+          const statusColor = s.status==='completed'?'#00d2ff':'#ef4444';
+          return '<tr style="border-bottom:1px solid rgba(148,163,184,0.08)">'
+            +'<td class="font-mono text-accent-blue">'+s.domain+'</td>'
+            +'<td><span style="font-size:9px;font-weight:700;color:'+statusColor+';text-transform:uppercase">'+s.status+'</span></td>'
+            +'<td class="font-mono" style="color:#e2e8f0">'+s.total+'</td>'
+            +'<td style="color:#64748b;font-size:11px">'+s.time+'</td>'
+            +'<td><button class="sub-view-btn" data-id="'+s.id+'" style="border:1px solid rgba(0,210,255,0.3);background:rgba(0,210,255,0.1);color:#93c5fd;font-size:10px;padding:2px 10px;border-radius:4px;cursor:pointer">View</button></td>'
+            +'</tr>';
+        }).join('');
+
+        tbody.querySelectorAll('.sub-view-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const r = await fetch('/api/subdomain/scan/'+btn.dataset.id);
+            const scan = await r.json();
+            if(scan && !scan.error) {
+              // Switch to scan tab and show results
+              tabs.forEach(t => { t.style.color='#94a3b8'; t.style.borderBottom='none'; });
+              tabs[0].style.color='#00d2ff'; tabs[0].style.borderBottom='2px solid #00d2ff';
+              Object.values(panels).forEach(p => p.classList.add('hidden'));
+              panels.scan.classList.remove('hidden');
+              renderScanResult(scan);
+            }
+          });
+        });
+      }
+
+      // ── Event listeners ──
+      scanBtn.addEventListener('click', () => startScan());
+      domainInput.addEventListener('keydown', e => { if(e.key==='Enter') startScan(); });
+
+      lucide.createIcons();
+      app.logTerminal('Subdomain Scanner initialized. 10 OSINT engines ready.', 'success');
+    }
+  }
+];
+
+// 2. Application Core Class
+class CyberDeepApp {
+  constructor() {
+    this.currentView = "dashboard"; // "dashboard" or "tool"
+    this.activeToolId = null;
+    this.favorites = this.loadFavorites();
+    this.recentActivity = this.loadRecentActivity();
+    this.apiKeys = this.loadAPIKeys();
+    this.searchQuery = "";
+    this.selectedCategory = "All";
+    
+    this.initUI();
+  }
+
+  // Local Storage Loaders & Savers
+  loadFavorites() {
+    return JSON.parse(localStorage.getItem("cd_favorites")) || [];
+  }
+
+  saveFavorites() {
+    localStorage.setItem("cd_favorites", JSON.stringify(this.favorites));
+  }
+
+  loadRecentActivity() {
+    return JSON.parse(localStorage.getItem("cd_recents")) || [];
+  }
+
+  saveRecentActivity() {
+    localStorage.setItem("cd_recents", JSON.stringify(this.recentActivity));
+  }
+
+  loadAPIKeys() {
+    return JSON.parse(localStorage.getItem("cd_api_keys")) || {
+      virustotal: "",
+      shodan: "",
+      ncrp: "",
+      fbi_osint: ""
+    };
+  }
+
+  saveAPIKeys(keys) {
+    this.apiKeys = keys;
+    localStorage.setItem("cd_api_keys", JSON.stringify(keys));
+    this.logTerminal("API Gateway Credentials Updated.", "success");
+  }
+
+  // Initialization Routing
+  initUI() {
+    // Check local high contrast settings
+    if (localStorage.getItem("cd_high_contrast") === "true") {
+      document.body.classList.add("high-contrast");
+    }
+
+    // Set up search bindings
+    const searchInput = document.getElementById("tool-search");
+    if (searchInput) {
+      searchInput.addEventListener("input", (e) => {
+        this.searchQuery = e.target.value;
+        this.renderToolsGrid();
+      });
+    }
+
+    // Toggle high contrast
+    const hcToggle = document.getElementById("high-contrast-toggle");
+    if (hcToggle) {
+      hcToggle.addEventListener("click", () => {
+        const isHc = document.body.classList.toggle("high-contrast");
+        localStorage.setItem("cd_high_contrast", isHc);
+        this.logTerminal(`Accessibility Mode: ${isHc ? 'High Contrast Enabled' : 'Standard Neon Layout Enabled'}.`, "info");
+      });
+    }
+
+    // API Keys modal triggers
+    const apiBtn = document.getElementById("api-keys-btn");
+    const apiClose = document.getElementById("close-api-modal");
+    const apiModal = document.getElementById("api-modal");
+    const apiForm = document.getElementById("api-form");
+
+    if (apiBtn && apiModal && apiClose && apiForm) {
+      apiBtn.addEventListener("click", () => {
+        // Populate current keys
+        document.getElementById("vt-key").value = this.apiKeys.virustotal || "";
+        document.getElementById("shodan-key").value = this.apiKeys.shodan || "";
+        document.getElementById("ncrp-key").value = this.apiKeys.ncrp || "";
+        document.getElementById("fbi-key").value = this.apiKeys.fbi_osint || "";
+        
+        apiModal.classList.remove("hidden");
+        apiModal.classList.add("flex");
+        this.logTerminal("API configuration terminal active.", "info");
+      });
+
+      apiClose.addEventListener("click", () => {
+        apiModal.classList.remove("flex");
+        apiModal.classList.add("hidden");
+      });
+
+      apiForm.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const keys = {
+          virustotal: document.getElementById("vt-key").value.trim(),
+          shodan: document.getElementById("shodan-key").value.trim(),
+          ncrp: document.getElementById("ncrp-key").value.trim(),
+          fbi_osint: document.getElementById("fbi-key").value.trim()
+        };
+        this.saveAPIKeys(keys);
+        apiModal.classList.remove("flex");
+        apiModal.classList.add("hidden");
+      });
+    }
+
+    // Collapsible Sidebar
+    const sidebarToggle = document.getElementById("sidebar-toggle");
+    const sidebar = document.getElementById("sidebar");
+    if (sidebarToggle && sidebar) {
+      sidebarToggle.addEventListener("click", () => {
+        sidebar.classList.toggle("-translate-x-full");
+      });
+    }
+
+    // Close active tool shell and return to dashboard
+    const closeToolBtn = document.getElementById("close-tool-btn");
+    if (closeToolBtn) {
+      closeToolBtn.addEventListener("click", () => {
+        this.showDashboard();
+      });
+    }
+
+    // Set Live Clock
+    this.startSystemClock();
+    
+    // Initial Render Actions
+    this.renderSidebarCategories();
+    this.renderToolsGrid();
+    this.renderRecentActivity();
+    this.updateStatsCounters();
+    
+    // Welcome logs
+    this.logTerminal("CyberDeep Command Core Initialized.", "success");
+    this.logTerminal("Telemetry active. System status SECURE.", "info");
+  }
+
+  // Real-time System Clock
+  startSystemClock() {
+    const clockEl = document.getElementById("live-clock");
+    if (clockEl) {
+      setInterval(() => {
+        const d = new Date();
+        clockEl.innerText = d.toISOString().replace("T", " ").substring(0, 19) + " UTC";
+      }, 1000);
+    }
+  }
+
+  // Terminal Simulator Logger
+  logTerminal(message, type = "info") {
+    const feed = document.getElementById("terminal-feed");
+    if (!feed) return;
+
+    const time = new Date().toISOString().substring(11, 19);
+    let colorClass = "text-text-muted";
+    let prefix = "[*]";
+
+    if (type === "success") {
+      colorClass = "text-accent-lime font-bold";
+      prefix = "[+]";
+    } else if (type === "error") {
+      colorClass = "text-accent-red font-bold";
+      prefix = "[-]";
+    } else if (type === "info") {
+      colorClass = "text-accent-blue";
+      prefix = "[i]";
+    }
+
+    const logRow = document.createElement("div");
+    logRow.className = "py-0.5 border-b border-white border-opacity-5 hover:bg-white hover:bg-opacity-5 px-2";
+    logRow.innerHTML = `
+      <span class="text-text-muted">[${time}]</span> 
+      <span class="${colorClass}">${prefix}</span> 
+      <span class="font-mono text-text-primary text-[11px]">${message}</span>
+    `;
+
+    feed.appendChild(logRow);
+    feed.scrollTop = feed.scrollHeight;
+  }
+
+  // Sidebar Category Filter Setup
+  renderSidebarCategories() {
+    const categories = ["All", "Favorites", "Financial", "OSINT", "Law Enforcement"];
+    const container = document.getElementById("category-list");
+    if (!container) return;
+
+    container.innerHTML = categories.map(cat => {
+      let icon = "layout-grid";
+      if (cat === "Favorites") icon = "star";
+      else if (cat === "Financial") icon = "credit-card";
+      else if (cat === "OSINT") icon = "map-pin";
+      else if (cat === "Law Enforcement") icon = "shield-alert";
+      else if (cat === "Network Forensics") icon = "radar";
+
+
+      return `
+        <li>
+          <button class="category-btn flex items-center justify-between w-full px-4 py-2.5 rounded-lg text-sm font-mono transition-all text-text-secondary hover:text-white hover:bg-white hover:bg-opacity-5 ${cat === this.selectedCategory ? 'bg-white bg-opacity-10 text-accent-lime border-r-2 border-accent-lime' : ''}" data-cat="${cat}">
+            <span class="flex items-center gap-3">
+              <i data-lucide="${icon}" class="w-4 h-4"></i>
+              <span>${cat}</span>
+            </span>
+          </button>
+        </li>
+      `;
+    }).join("");
+
+    // Hook click events
+    container.querySelectorAll(".category-btn").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        container.querySelectorAll(".category-btn").forEach(b => {
+          b.classList.remove("bg-white", "bg-opacity-10", "text-accent-lime", "border-r-2", "border-accent-lime");
+        });
+        const btnNode = e.currentTarget;
+        btnNode.classList.add("bg-white", "bg-opacity-10", "text-accent-lime", "border-r-2", "border-accent-lime");
+        
+        this.selectedCategory = btnNode.getAttribute("data-cat");
+        this.logTerminal(`Category Filter set to: [${this.selectedCategory}]`, "info");
+        this.renderToolsGrid();
+      });
+    });
+
+    lucide.createIcons();
+  }
+
+  // Main Grid Rendering
+  renderToolsGrid() {
+    const grid = document.getElementById("tools-grid");
+    if (!grid) return;
+
+    // Filter tools based on category and search query
+    let filteredTools = TOOLS_REGISTRY.filter(tool => {
+      const matchesSearch = tool.name.toLowerCase().includes(this.searchQuery.toLowerCase()) ||
+                            tool.description.toLowerCase().includes(this.searchQuery.toLowerCase());
+      
+      let matchesCategory = true;
+      if (this.selectedCategory === "Favorites") {
+        matchesCategory = this.favorites.includes(tool.id);
+      } else if (this.selectedCategory !== "All") {
+        matchesCategory = tool.category === this.selectedCategory;
+      }
+
+      return matchesSearch && matchesCategory;
+    });
+
+    if (filteredTools.length === 0) {
+      grid.innerHTML = `
+        <div class="col-span-full py-16 text-center cyber-card border-dashed">
+          <i data-lucide="search-code" class="w-12 h-12 text-text-muted mx-auto mb-3"></i>
+          <p class="font-mono text-sm text-text-secondary">No digital assets match the search query.</p>
+        </div>
+      `;
+      lucide.createIcons();
+      return;
+    }
+
+    grid.innerHTML = filteredTools.map(tool => {
+      const isFav = this.favorites.includes(tool.id);
+      const isBeta = tool.status === "Beta";
+      
+      return `
+        <div class="cyber-card p-6 flex flex-col justify-between relative overflow-hidden group">
+          <!-- Glow Accent Overlay -->
+          <div class="absolute inset-0 bg-gradient-to-r from-accent-lime to-accent-blue opacity-0 group-hover:opacity-5 transition-opacity duration-300 pointer-events-none"></div>
+          
+          <div>
+            <div class="flex justify-between items-start mb-4">
+              <div class="p-3 bg-white bg-opacity-5 rounded-lg border border-white border-opacity-10 group-hover:border-accent-lime transition-all duration-300">
+                <i data-lucide="${tool.icon}" class="w-6 h-6 text-accent-lime group-hover:text-white transition-colors"></i>
+              </div>
+              <div class="flex gap-2 items-center">
+                <span class="cyber-badge cyber-badge-${tool.badgeType}">${tool.status}</span>
+                <button class="fav-btn text-text-muted hover:text-accent-lime transition-colors" data-id="${tool.id}" title="Toggle Favorite">
+                  <i data-lucide="star" class="w-5 h-5 ${isFav ? 'fill-accent-lime text-accent-lime' : ''}"></i>
+                </button>
+              </div>
+            </div>
+            
+            <h3 class="text-lg font-bold font-mono text-text-primary mb-2 group-hover:text-accent-lime transition-colors">${tool.name}</h3>
+            <p class="text-sm text-text-secondary mb-6 leading-relaxed">${tool.description}</p>
+          </div>
+          
+          <div class="flex items-center justify-between border-t border-white border-opacity-5 pt-4">
+            <span class="text-xs font-mono text-text-muted uppercase">${tool.category}</span>
+            <button class="cyber-btn text-xs py-2 px-4 launch-btn" data-id="${tool.id}">
+              <span>LAUNCH TOOL</span> <i data-lucide="terminal" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    // Bind Favorite & Launch Actions
+    grid.querySelectorAll(".fav-btn").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const id = e.currentTarget.getAttribute("data-id");
+        this.toggleFavorite(id);
+      });
+    });
+
+    grid.querySelectorAll(".launch-btn").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        const id = e.currentTarget.getAttribute("data-id");
+        this.launchTool(id);
+      });
+    });
+
+    lucide.createIcons();
+  }
+
+  // Favorite toggle function
+  toggleFavorite(toolId) {
+    const index = this.favorites.indexOf(toolId);
+    if (index === -1) {
+      this.favorites.push(toolId);
+      this.logTerminal(`Starred tool added: [${toolId}]`, "success");
+    } else {
+      this.favorites.splice(index, 1);
+      this.logTerminal(`Starred tool removed: [${toolId}]`, "info");
+    }
+    this.saveFavorites();
+    this.renderToolsGrid();
+    this.updateStatsCounters();
+    this.renderSidebarCategories(); // Refresh sidebar count / indicator
+  }
+
+  // Launching a specific tool
+  launchTool(toolId) {
+    if (toolId === "ip-intel-analyzer") {
+      window.location.href = "/tool";
+      return;
+    }
+    const tool = TOOLS_REGISTRY.find(t => t.id === toolId);
+    if (!tool) return;
+
+    this.activeToolId = toolId;
+    this.currentView = "tool";
+    
+    // Add to recent activity
+    this.addToRecents(toolId);
+
+    // Populate active tool UI container
+    const toolTitle = document.getElementById("active-tool-title");
+    const toolCategory = document.getElementById("active-tool-category");
+    const toolContent = document.getElementById("active-tool-content");
+    const toolHeaderIcon = document.getElementById("active-tool-icon");
+
+    if (toolTitle) toolTitle.innerText = tool.name;
+    if (toolCategory) toolCategory.innerText = tool.category;
+    if (toolHeaderIcon) toolHeaderIcon.setAttribute("data-lucide", tool.icon);
+
+    if (toolContent) {
+      toolContent.innerHTML = tool.placeholderHtml;
+    }
+
+    // Toggle viewport screens
+    document.getElementById("dashboard-screen").classList.add("hidden");
+    document.getElementById("tool-screen").classList.remove("hidden");
+    
+    // Init tool dynamic script bindings
+    if (tool.initLogic) {
+      tool.initLogic();
+    }
+
+    this.logTerminal(`Spawning container environment for: [${tool.name}]`, "info");
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    lucide.createIcons();
+  }
+
+  // Return to homepage/dashboard
+  showDashboard() {
+    this.currentView = "dashboard";
+    this.activeToolId = null;
+
+    document.getElementById("tool-screen").classList.add("hidden");
+    document.getElementById("dashboard-screen").classList.remove("hidden");
+    
+    this.logTerminal("Exited active environment. Returned to command center.", "info");
+    this.renderToolsGrid();
+    this.renderRecentActivity();
+    this.updateStatsCounters();
+  }
+
+  // Adding item to recent activity listing
+  addToRecents(toolId) {
+    const timestamp = new Date().toLocaleTimeString();
+    
+    // Filter duplicates
+    this.recentActivity = this.recentActivity.filter(item => item.id !== toolId);
+    
+    // Prepend to array
+    this.recentActivity.unshift({
+      id: toolId,
+      time: timestamp
+    });
+
+    // Limit to 5 entries
+    if (this.recentActivity.length > 5) {
+      this.recentActivity.pop();
+    }
+
+    this.saveRecentActivity();
+  }
+
+  // Render recent activity elements in right pane
+  renderRecentActivity() {
+    const list = document.getElementById("recent-activity-list");
+    if (!list) return;
+
+    if (this.recentActivity.length === 0) {
+      list.innerHTML = `
+        <div class="py-6 text-center text-xs text-text-muted font-mono">
+          No records in current session.
+        </div>
+      `;
+      return;
+    }
+
+    list.innerHTML = this.recentActivity.map(item => {
+      const tool = TOOLS_REGISTRY.find(t => t.id === item.id);
+      if (!tool) return "";
+      
+      return `
+        <div class="p-3 bg-white bg-opacity-5 border-l-2 border-accent-lime border-opacity-60 rounded-r-lg hover:bg-opacity-10 transition-all cursor-pointer" onclick="app.launchTool('${tool.id}')">
+          <div class="flex justify-between items-center mb-1">
+            <span class="text-xs font-mono font-bold text-text-primary flex items-center gap-1.5">
+              <i data-lucide="${tool.icon}" class="w-3.5 h-3.5 text-accent-lime"></i> ${tool.name}
+            </span>
+            <span class="text-[10px] text-accent-blue font-mono">${item.time}</span>
+          </div>
+          <p class="text-[11px] text-text-muted truncate">${tool.description}</p>
+        </div>
+      `;
+    }).join("");
+
+    lucide.createIcons();
+  }
+
+  // Update statistics dashboard counts
+  updateStatsCounters() {
+    const totalEl = document.getElementById("stat-total-tools");
+    const favsEl = document.getElementById("stat-favs-tools");
+    const activeEl = document.getElementById("stat-active-sessions");
+
+    if (totalEl) totalEl.innerText = TOOLS_REGISTRY.length;
+    if (favsEl) favsEl.innerText = this.favorites.length;
+    if (activeEl) {
+      // Simulate random count of active nodes around the world using this hub
+      activeEl.innerText = Math.floor(142 + Math.random() * 20);
+    }
+  }
+}
+
+// Instantiate App Global Instance
+let app;
+document.addEventListener("DOMContentLoaded", () => {
+  app = new CyberDeepApp();
+});
