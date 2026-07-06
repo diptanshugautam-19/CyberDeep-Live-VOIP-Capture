@@ -43,7 +43,7 @@ from app.storage.database import (
     LIVE_CAPTURE_DB_PATH, TELECOM_DB_PATH, GEOIP_DB_PATH,
     THREATINTEL_DB_PATH, DNS_DB_PATH, USERS_DB_PATH, CACHE_DB_PATH,
     FLOWS_DB_PATH, TABLE_MAP, SCHEMAS, router,
-    get_investigation, list_investigations, decompress_bytes,
+    get_investigation, list_investigations, decompress_bytes, init_db
 )
 
 # ---------------------------------------------------------------------------
@@ -1767,9 +1767,14 @@ def print_summary(c: Checker):
 def main():
     parser = argparse.ArgumentParser(description="CyberDeep Storage Verification Framework")
     parser.add_argument("--skip-api", action="store_true", help="Skip API regression tests")
+    parser.add_argument("--init-dummy", action="store_true", help="Initialize dummy databases for CI/CD")
     parser.add_argument("--sample-size", type=int, default=100,
                         help="Number of investigations to sample (default: 100)")
     args = parser.parse_args()
+
+    if args.init_dummy:
+        print("Initializing dummy databases for CI/CD...")
+        init_db()
 
     print_banner()
 

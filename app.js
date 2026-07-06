@@ -4656,7 +4656,18 @@ class CyberDeepApp {
   // Main Grid Rendering
   renderToolsGrid() {
     const grid = document.getElementById("tools-grid");
+    const skeleton = document.getElementById("tools-skeleton");
     if (!grid) return;
+
+    // Simulate network delay for premium feel
+    setTimeout(() => {
+      if (skeleton) {
+        skeleton.classList.replace("fade-in", "fade-out");
+        setTimeout(() => skeleton.style.display = 'none', 300);
+      }
+      grid.classList.replace("fade-out", "fade-in");
+      grid.style.display = 'grid';
+    }, 400);
 
     // Filter tools based on category and search query
     let filteredTools = TOOLS_REGISTRY.filter(tool => {
@@ -4689,7 +4700,7 @@ class CyberDeepApp {
       const isBeta = tool.status === "Beta";
       
       return `
-        <div class="cyber-card p-6 flex flex-col justify-between relative overflow-hidden group">
+        <div class="cyber-card glass-panel p-6 flex flex-col justify-between relative overflow-hidden group hover:-translate-y-1 transition-all duration-300">
           <!-- Glow Accent Overlay -->
           <div class="absolute inset-0 bg-gradient-to-r from-accent-lime to-accent-blue opacity-0 group-hover:opacity-5 transition-opacity duration-300 pointer-events-none"></div>
           
