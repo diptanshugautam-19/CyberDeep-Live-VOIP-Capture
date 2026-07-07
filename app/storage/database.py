@@ -634,6 +634,7 @@ def save_investigation(filename: str, analysis: dict) -> str:
         )
 
     logger.info(f"Saved investigation {investigation_id} with {len(packet_rows)} packets mapped across partitioned files.")
+    analysis["packet_rows"] = packet_rows
     return investigation_id
 
 def get_investigation(investigation_id: str) -> dict | None:

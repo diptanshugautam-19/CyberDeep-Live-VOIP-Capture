@@ -577,6 +577,31 @@ async def threat_intel_status():
     return _threat_mgr.get_cif_status()
 
 
+@app.get("/api/geoip/lookup")
+async def geoip_lookup(ip: str):
+    """GeoIP lookup resolving via parallel provider stack and offline caches."""
+    from app.enrichment.telecom import enrich_telecom
+    res = enrich_telecom(ip)
+    return {
+        "status": "success",
+        "query": ip,
+        "country": res.get("country") or "Unknown",
+        "countryCode": "",
+        "regionName": res.get("region") or "Unknown",
+        "city": res.get("city") or "Unknown",
+        "isp": res.get("isp") or "Unknown",
+        "org": res.get("asn_org") or "Unknown",
+        "as": res.get("asn") or "AS0",
+        "asname": res.get("asn_org") or "Unknown",
+        "lat": res.get("latitude") or 0.0,
+        "lon": res.get("longitude") or 0.0,
+        "timezone": "UTC",
+        "proxy": False,
+        "hosting": False,
+        "mobile": False,
+    }
+
+
 # ── Subdomain Scanner (Sublist3r) API ───────────────────────────────
 from app.subdomain_scanner import SubdomainScanner
 

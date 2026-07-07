@@ -72,22 +72,6 @@ class PcapParser(EvidenceParser):
             payload_present, payload_bytes = _packet_payload_bytes(packet)
             protocol = _detect_protocol(packet, base_proto, src_port, dst_port, payload_bytes)
 
-            IGNORE_PROTOCOLS = {
-                "HTTP",
-                "FTP",
-                "SMTP",
-                "POP3",
-                "IMAP",
-                "SMB",
-                "NFS",
-                "RDP",
-                "TELNET",
-                "MYSQL",
-                "POSTGRESQL",
-                "BITTORRENT"
-            }
-            if protocol in IGNORE_PROTOCOLS:
-                continue
 
             key = (src_ip, dst_ip, src_port, dst_port, protocol)
             tcp_flags = _tcp_flags(packet)

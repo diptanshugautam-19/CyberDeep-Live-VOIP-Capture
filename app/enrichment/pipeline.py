@@ -14,6 +14,21 @@ from app.threat_intel.manager import ThreatIntelManager
 
 STUN_TURN_PORTS = {3478, 3479, 3480, 3481, 5349, 19302, 19305}
 
+IGNORE_PROTOCOLS = {
+    "HTTP",
+    "FTP",
+    "SMTP",
+    "POP3",
+    "IMAP",
+    "SMB",
+    "NFS",
+    "RDP",
+    "TELNET",
+    "MYSQL",
+    "POSTGRESQL",
+    "BITTORRENT"
+}
+
 OUI_DATABASE = {
     # 24-bit (6 hex chars) - MA-L
     # Apple Inc.
@@ -672,6 +687,11 @@ def analyze_records(records: list[ConnectionRecord]) -> dict:
         # Keep private unicast peers because they are real packet destinations
         # in LAN and peer-to-peer captures. Exclude only non-host destinations.
         if _exclude_destination(addr):
+            packet_rows.extend(_flatten_packet_rows(row))
+            continue
+        # Exclude verbose/application protocols from high-level destination dashboard grouped list.
+        # Still flatten their packet details into packet_rows for the Packet Analyzer.
+        if str(row.get("protocol") or "").upper() in IGNORE_PROTOCOLS:
             packet_rows.extend(_flatten_packet_rows(row))
             continue
         grouped[row["destination_ip"]].append(row)
