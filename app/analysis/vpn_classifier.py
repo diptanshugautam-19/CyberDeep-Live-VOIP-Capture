@@ -99,6 +99,7 @@ class InterfaceSignature:
         self.icon = data.get("icon", "network")
         self.color = data.get("color", "#7A7F8C")
         self.capture_source_hints = data.get("capture_source_hints", [])
+        self.address_spaces = data.get("address_spaces", [])
         self.conditions = [WeightedCondition(c) for c in data.get("conditions", [])]
 
     def score(self, ip: str, all_records: List[Dict[str, Any]], filename: str = "") -> DetectionResult:
@@ -106,14 +107,19 @@ class InterfaceSignature:
         if self.role_on_match == EndpointRole.VPN_INTERFACE and not is_rfc1918(ip):
             return DetectionResult(self.id, self.role_on_match, 0.0, [], None)
 
-        # Fast-fail: android_vpnservice signature requires IP to be in 10.215.173.0/24
-        if self.id == "android_vpnservice":
+        # Dynamic address space constraint check:
+        # If the interface signature specifies allowed address spaces, the target IP must belong to one of them.
+        if self.address_spaces:
+            matched_space = False
             try:
                 addr = ipaddress.ip_address(ip)
-                net = ipaddress.ip_network("10.215.173.0/24")
-                if addr not in net:
-                    return DetectionResult(self.id, self.role_on_match, 0.0, [], None)
+                for space in self.address_spaces:
+                    if addr in ipaddress.ip_network(space):
+                        matched_space = True
+                        break
             except Exception:
+                pass
+            if not matched_space:
                 return DetectionResult(self.id, self.role_on_match, 0.0, [], None)
 
         # Find potential peer IP that forms a pair with the target IP

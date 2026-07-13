@@ -3,6 +3,8 @@ display_name: "Android VPN Interface"
 role_on_match: VPN_INTERFACE
 icon: vpn-tunnel
 color: "#7A7F8C"
+address_spaces:
+  - "10.215.173.0/24"
 
 capture_source_hints:
   - PCAPdroid
