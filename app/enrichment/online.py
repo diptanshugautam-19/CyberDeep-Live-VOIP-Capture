@@ -110,8 +110,92 @@ def _geocode_city(city: str, region: str, country: str) -> tuple[float | None, f
     return None, None
 
 
+import socket
+
+def _query_whois_raw(ip: str) -> str:
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(3.0)
+        s.connect(("whois.iana.org", 43))
+        s.sendall(f"{ip}\r\n".encode("utf-8"))
+        response = b""
+        while True:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            response += chunk
+        s.close()
+        
+        iana_res = response.decode("utf-8", errors="ignore")
+        refer_server = None
+        for line in iana_res.splitlines():
+            if line.lower().startswith("refer:") or line.lower().startswith("whois:"):
+                refer_server = line.split(":", 1)[1].strip()
+                break
+        
+        if not refer_server:
+            refer_server = "whois.arin.net"
+            
+        s2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s2.settimeout(3.0)
+        s2.connect((refer_server, 43))
+        query = f"n {ip}\r\n" if "arin" in refer_server else f"{ip}\r\n"
+        s2.sendall(query.encode("utf-8"))
+        res = b""
+        while True:
+            chunk = s2.recv(4096)
+            if not chunk:
+                break
+            res += chunk
+        s2.close()
+        return res.decode("utf-8", errors="ignore")
+    except Exception:
+        return ""
+
+def _parse_whois_text(whois_text: str) -> dict:
+    info = {}
+    lines = whois_text.splitlines()
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or line.startswith("%"):
+            continue
+        if ":" in line:
+            parts = line.split(":", 1)
+            key = parts[0].strip().lower()
+            val = parts[1].strip()
+            if key in ("netname", "descr", "orgname", "owner", "org-name"):
+                if "isp" not in info:
+                    info["isp"] = val
+                info["asn_org"] = val
+            elif key in ("asn", "originas", "origin"):
+                info["asn"] = val
+            elif key == "country":
+                info["country"] = val
+    return info
+
+
 @lru_cache(maxsize=4096)
 def _lookup_ip_api(ip: str, timeout: float) -> dict:
+    def get_raw_whois():
+        whois_text = _query_whois_raw(ip)
+        if whois_text:
+            parsed = _parse_whois_text(whois_text)
+            if parsed.get("isp") or parsed.get("asn_org"):
+                return {
+                    "isp": parsed.get("isp", "Unknown Provider"),
+                    "org": parsed.get("asn_org", "Unknown Organization"),
+                    "as": parsed.get("asn", "AS0"),
+                    "country": parsed.get("country", "Unknown"),
+                    "city": "Unknown",
+                    "region": "Unknown",
+                    "lat": 0.0,
+                    "lon": 0.0,
+                    "query": ip,
+                    "status": "success",
+                    "_source": "whois_port_43"
+                }
+        return None
+
     def get_ipwhois():
         try:
             r = httpx.get(f"https://ipwho.is/{ip}", timeout=timeout)
@@ -175,7 +259,7 @@ def _lookup_ip_api(ip: str, timeout: float) -> dict:
             pass
         return None
 
-    workers = [get_ipwhois, get_freeipapi, get_ipapi_com, get_ipapi_co, get_ip_api_com]
+    workers = [get_raw_whois, get_ipwhois, get_freeipapi, get_ipapi_com, get_ipapi_co, get_ip_api_com]
     
     with ThreadPoolExecutor(max_workers=len(workers)) as executor:
         futures = [executor.submit(w) for w in workers]
