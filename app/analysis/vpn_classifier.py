@@ -106,6 +106,16 @@ class InterfaceSignature:
         if self.role_on_match == EndpointRole.VPN_INTERFACE and not is_rfc1918(ip):
             return DetectionResult(self.id, self.role_on_match, 0.0, [], None)
 
+        # Fast-fail: android_vpnservice signature requires IP to be in 10.215.173.0/24
+        if self.id == "android_vpnservice":
+            try:
+                addr = ipaddress.ip_address(ip)
+                net = ipaddress.ip_network("10.215.173.0/24")
+                if addr not in net:
+                    return DetectionResult(self.id, self.role_on_match, 0.0, [], None)
+            except Exception:
+                return DetectionResult(self.id, self.role_on_match, 0.0, [], None)
+
         # Find potential peer IP that forms a pair with the target IP
         # We look for the peer IP (must be RFC1918) that shares the most traffic with the target IP
         traffic_by_peer = {}
