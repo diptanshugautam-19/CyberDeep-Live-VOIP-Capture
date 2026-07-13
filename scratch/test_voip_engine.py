@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.protocols.stun import decode_xor_mapped_address, parse_stun_packet
 from app.protocols.rtp import parse_rtp_header, compute_qos_metrics
-from app.protocols.sip import parse_sip_message, parse_sdp_candidate
+from app.protocols.sip import parse_sip_message, _parse_sdp_candidate as parse_sdp_candidate
 from app.protocols.ice import IceCandidate, EndpointIdentity, IceStateMachine, resolve_endpoint_identity
 from app.protocols.models import VoipSession, QosMetrics, RtpStream
 from app.analysis.attribution import build_call_attribution

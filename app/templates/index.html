@@ -13,5 +13,163 @@
 </head>
 <body class="dark bg-[#050816] text-white overflow-x-hidden">
   <div id="root"></div>
+  <script>
+    document.addEventListener("DOMContentLoaded", function() {
+      // Hide the CyberDeep Pro banner and System Status, and inject the glowing button natively
+      const observer = new MutationObserver(() => {
+        // 1. Hide the CyberDeep Pro banner
+        const elements = document.querySelectorAll('h1, h2, h3, h4, h5, h6, span, div, p');
+        for (const el of elements) {
+          if (el.textContent.trim() === 'CyberDeep Pro') {
+            let current = el.parentElement;
+            while (current && current.tagName !== 'BODY') {
+              const cls = current.className || '';
+              if (typeof cls === 'string' && (cls.includes('h-screen') || cls.includes('w-64') || cls.includes('sidebar') || cls.includes('min-h-screen'))) {
+                break;
+              }
+              if (typeof cls === 'string' && (cls.includes('bg-') || cls.includes('p-4') || cls.includes('border') || cls.includes('rounded'))) {
+                if (current.style.display !== 'none') {
+                  current.style.display = 'none';
+                }
+                break;
+              }
+              current = current.parentElement;
+            }
+          }
+        }
+        
+        // 2. Hide the System Status section (SYSTEM STATUS / All Systems Operational / v2.0.0)
+        for (const el of elements) {
+          const text = el.textContent ? el.textContent.trim() : '';
+          if (text === 'SYSTEM STATUS' || text === 'All Systems Operational' || text === 'v2.0.0') {
+            let current = el.parentElement;
+            while (current && current.tagName !== 'BODY') {
+              const cls = current.className || '';
+              if (typeof cls === 'string' && (cls.includes('h-screen') || cls.includes('w-64') || cls.includes('sidebar') || cls.includes('min-h-screen'))) {
+                break;
+              }
+              // Target the container block holding System Status (typically has border, bg, padding)
+              if (typeof cls === 'string' && (cls.includes('p-') || cls.includes('border') || cls.includes('rounded') || cls.includes('bg-'))) {
+                if (current.style.display !== 'none') {
+                  current.style.display = 'none';
+                }
+                break;
+              }
+              current = current.parentElement;
+            }
+            // Direct parent hide fallback
+            if (el.parentElement && el.parentElement.style.display !== 'none' && el.parentElement !== document.body) {
+              el.parentElement.style.display = 'none';
+            }
+          }
+        }
+        
+        // 3. Add the glowing "Live Capture Mode 🔴" button inside the sidebar
+        const sidebar = document.querySelector('nav, aside, .sidebar, [class*="sidebar"], .w-64');
+        if (sidebar && !document.getElementById('live-capture-link-native')) {
+          const link = document.createElement('a');
+          link.id = 'live-capture-link-native';
+          link.href = '/tool/live';
+          link.target = '_blank';
+          link.innerHTML = `
+            <div style="display: flex; align-items: center; justify-content: center; gap: 10px; padding: 12px 16px; margin: 16px; background: rgba(6, 182, 212, 0.15); border: 1px solid rgba(6, 182, 212, 0.4); border-radius: 8px; color: #22d3ee; font-weight: bold; cursor: pointer; text-decoration: none; box-shadow: 0 0 15px rgba(6, 182, 212, 0.25); text-shadow: 0 0 8px rgba(34, 211, 238, 0.6); transition: all 0.3s ease;">
+              <span style="display: inline-block; width: 10px; height: 10px; background-color: #ef4444; border-radius: 50%; box-shadow: 0 0 8px #ef4444; animation: pulse-live 1.5s infinite;"></span>
+              <span style="font-family: 'Inter', sans-serif; font-size: 13px; letter-spacing: 0.5px;">Live Capture Mode</span>
+            </div>
+          `;
+          
+          link.onmouseover = function() {
+            const container = this.firstElementChild;
+            container.style.background = 'rgba(6, 182, 212, 0.35)';
+            container.style.borderColor = 'rgba(34, 211, 238, 0.8)';
+            container.style.boxShadow = '0 0 22px rgba(6, 182, 212, 0.6)';
+            container.style.transform = 'translateY(-1px)';
+          };
+          link.onmouseout = function() {
+            const container = this.firstElementChild;
+            container.style.background = 'rgba(6, 182, 212, 0.15)';
+            container.style.borderColor = 'rgba(6, 182, 212, 0.4)';
+            container.style.boxShadow = '0 0 15px rgba(6, 182, 212, 0.25)';
+            container.style.transform = 'none';
+          };
+          
+          // Try to append it to the menu list if one exists, otherwise directly in the sidebar
+          const menuList = sidebar.querySelector('ul, .flex-col');
+          if (menuList) {
+            menuList.appendChild(link);
+          } else {
+            sidebar.appendChild(link);
+          }
+          
+          if (!document.getElementById('live-pulse-style')) {
+            const style = document.createElement('style');
+            style.id = 'live-pulse-style';
+            style.innerHTML = `@keyframes pulse-live { 0% { opacity: 1; transform: scale(1); } 50% { opacity: 0.3; transform: scale(0.9); } 100% { opacity: 1; transform: scale(1); } }`;
+            document.head.appendChild(style);
+          }
+        }
+        
+        // Remove old floating button if exists
+        const oldFloatingBtn = document.getElementById('live-capture-btn-forced');
+        if (oldFloatingBtn) oldFloatingBtn.remove();
+      });
+      
+      observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+
+      // Auto-load live capture file if live=true is in URL query parameters
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('live') === 'true') {
+        const apiKey = localStorage.getItem('wirestream_api_key') || '943b5e69da2130b5d7121dc5d469bf6adbfd60b5';
+        
+        // Polling loop to wait for React to mount the dropzone file input element
+        const checkInterval = setInterval(async () => {
+          const fileInput = document.querySelector('input[type="file"]');
+          if (fileInput) {
+            clearInterval(checkInterval);
+            try {
+              // Render diagnostic overlay loader
+              const statusEl = document.createElement('div');
+              statusEl.id = 'live-pcap-loader-status';
+              statusEl.style.cssText = 'position:fixed; bottom:24px; right:24px; background:rgba(6,182,212,0.95); border:1px solid rgba(34,211,238,0.8); color:#fff; padding:12px 20px; border-radius:8px; font-family:sans-serif; font-size:13px; z-index:99999; box-shadow:0 0 20px rgba(6,182,212,0.5); pointer-events:none; font-weight:bold; letter-spacing:0.5px; transition:all 0.3s;';
+              statusEl.textContent = '🔄 Transferring capture data to Offline Analyzer...';
+              document.body.appendChild(statusEl);
+              
+              const res = await fetch('/api/capture/export?format=pcap', {
+                headers: { 'Authorization': `Bearer ${apiKey}` }
+              });
+              if (!res.ok) throw new Error("Failed to export live capture pcap");
+              const blob = await res.blob();
+              
+              statusEl.textContent = '⚡ Parsing trace & compiling investigation...';
+              
+              const file = new File([blob], 'live_capture.pcap', { type: 'application/octet-stream' });
+              const container = new DataTransfer();
+              container.items.add(file);
+              
+              fileInput.files = container.files;
+              fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+              
+              setTimeout(() => {
+                statusEl.style.opacity = '0';
+                setTimeout(() => statusEl.remove(), 300);
+              }, 2500);
+            } catch (err) {
+              console.error("Auto-load live capture failed:", err);
+              const statusEl = document.getElementById('live-pcap-loader-status');
+              if (statusEl) {
+                statusEl.style.background = 'rgba(239,68,68,0.95)';
+                statusEl.style.borderColor = '#f87171';
+                statusEl.textContent = '❌ Failed to transfer live capture data.';
+                setTimeout(() => {
+                  statusEl.style.opacity = '0';
+                  setTimeout(() => statusEl.remove(), 300);
+                }, 4000);
+              }
+            }
+          }
+        }, 300);
+      }
+    });
+  </script>
 </body>
 </html>

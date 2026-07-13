@@ -59,8 +59,10 @@ def export_investigation(investigation_id: str, file_format: str):
     investigation = get_investigation(investigation_id)
     if not investigation:
         raise HTTPException(status_code=404, detail="Investigation not found")
+    return export_investigation_data(investigation, file_format)
 
-    rows = investigation["rows"]
+def export_investigation_data(investigation: dict, file_format: str):
+    rows = investigation.get("rows", [])
     frame = pd.DataFrame(rows)
     if not frame.empty:
         frame = frame[[column for column in EXPORT_COLUMNS if column in frame.columns]]
@@ -72,13 +74,13 @@ def export_investigation(investigation_id: str, file_format: str):
     if file_format == "csv":
         stream = io.StringIO()
         frame.to_csv(stream, index=False)
-        return Response(stream.getvalue(), media_type="text/csv")
+        return Response(stream.getvalue(), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename={investigation.get('id', 'export')}.csv"})
 
     if file_format == "xlsx":
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             frame.to_excel(writer, sheet_name="Destinations", index=False)
-            pd.DataFrame([investigation["summary"]]).to_excel(writer, sheet_name="Summary", index=False)
+            pd.DataFrame([investigation.get("summary", {})]).to_excel(writer, sheet_name="Summary", index=False)
             pd.DataFrame(investigation.get("hosts", [])).to_excel(writer, sheet_name="Hosts", index=False)
             pd.DataFrame(investigation.get("sessions", [])).to_excel(writer, sheet_name="Sessions", index=False)
             pd.DataFrame(investigation.get("communication_matrix", [])).to_excel(writer, sheet_name="Matrix", index=False)
@@ -98,11 +100,118 @@ def export_investigation(investigation_id: str, file_format: str):
         return StreamingResponse(
             output,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f"attachment; filename={investigation_id}.xlsx"},
+            headers={"Content-Disposition": f"attachment; filename={investigation.get('id', 'export')}.xlsx"},
         )
 
     if file_format == "pdf":
         return _pdf_report(investigation, frame)
+
+    if file_format == "html":
+        rows_html = "".join([
+            f"<tr><td>{r.get('destination_ip', 'unknown')}</td><td>{r.get('protocol', 'unknown')}</td><td>{'Malicious' if r.get('malicious') else r.get('reputation_score', 0)}</td><td>{r.get('bytes_transferred', 0)}</td></tr>"
+            for r in rows[:50]
+        ])
+        html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+  <title>CyberDeep Live Capture Report</title>
+  <style>
+    body {{ font-family: 'Inter', sans-serif; background-color: #0b0f19; color: #cbd5e1; padding: 40px; }}
+    h1 {{ color: #22d3ee; }}
+    table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
+    th, td {{ border: 1px solid #1e293b; padding: 12px; text-align: left; }}
+    th {{ background-color: #0f172a; color: #22d3ee; }}
+    tr:nth-child(even) {{ background-color: #0d1220; }}
+  </style>
+</head>
+<body>
+  <h1>CyberDeep Live Capture Report</h1>
+  <p>Filename: {investigation.get('filename', 'Live Capture')}</p>
+  <p>Generated: {investigation.get('created_at', '')}</p>
+  <h2>Top Conversations & Destinations</h2>
+  <table>
+    <thead>
+      <tr><th>Destination IP</th><th>Protocol</th><th>Threat Rating / Score</th><th>Bytes</th></tr>
+    </thead>
+    <tbody>
+      {rows_html}
+    </tbody>
+  </table>
+</body>
+</html>"""
+        return Response(html_content, media_type="text/html", headers={"Content-Disposition": f"attachment; filename={investigation.get('id', 'export')}.html"})
+
+    if file_format == "stix":
+        import uuid
+        from datetime import datetime, timezone
+        bundle_id = f"bundle--{uuid.uuid4()}"
+        objects = []
+        for r in rows:
+            if r.get("malicious"):
+                ip = r.get("destination_ip")
+                objects.append({
+                    "type": "indicator",
+                    "id": f"indicator--{uuid.uuid4()}",
+                    "spec_version": "2.1",
+                    "created": datetime.now(timezone.utc).isoformat(),
+                    "modified": datetime.now(timezone.utc).isoformat(),
+                    "name": f"Malicious IP: {ip}",
+                    "description": f"IP classified as malicious with reputation score {r.get('reputation_score')}",
+                    "pattern": f"[ipv4-addr:value = '{ip}']",
+                    "pattern_type": "stix",
+                    "valid_from": datetime.now(timezone.utc).isoformat()
+                })
+        if not objects:
+            objects.append({
+                "type": "indicator",
+                "id": f"indicator--{uuid.uuid4()}",
+                "spec_version": "2.1",
+                "created": datetime.now(timezone.utc).isoformat(),
+                "modified": datetime.now(timezone.utc).isoformat(),
+                "name": "Clean Network Flow",
+                "pattern": "[ipv4-addr:value = '0.0.0.0']",
+                "pattern_type": "stix",
+                "valid_from": datetime.now(timezone.utc).isoformat()
+            })
+        bundle = {
+            "type": "bundle",
+            "id": bundle_id,
+            "spec_version": "2.1",
+            "objects": objects
+        }
+        return Response(json.dumps(bundle, indent=2), media_type="application/json", headers={"Content-Disposition": f"attachment; filename={investigation.get('id', 'export')}.stix.json"})
+
+    if file_format == "openioc":
+        import uuid
+        from datetime import datetime, timezone
+        ioc_id = str(uuid.uuid4())
+        now_str = datetime.now(timezone.utc).isoformat()
+        xml_items = []
+        for r in rows:
+            if r.get("malicious"):
+                ip = r.get("destination_ip")
+                xml_items.append(f"""      <IndicatorItem id="{uuid.uuid4()}" condition="is">
+        <Context document="PortItem" search="PortItem/remoteIP" type="mir" />
+        <Content type="string">{ip}</Content>
+      </IndicatorItem>""")
+        if not xml_items:
+            xml_items.append(f"""      <IndicatorItem id="{uuid.uuid4()}" condition="is">
+        <Context document="PortItem" search="PortItem/remoteIP" type="mir" />
+        <Content type="string">127.0.0.1</Content>
+      </IndicatorItem>""")
+        xml_content = f"""<?xml version="1.0" encoding="utf-8"?>
+<ioc xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" id="{ioc_id}" last-modified="{now_str}" xmlns="http://schemas.mandiant.com/2010/ioc">
+  <short_description>Live Capture Indicators</short_description>
+  <description>Threat indicators detected during live capture session.</description>
+  <authored_by>CyberDeep</authored_by>
+  <authored_date>{now_str}</authored_date>
+  <definition>
+    <Indicator operator="OR" id="{uuid.uuid4()}">
+{chr(10).join(xml_items)}
+    </Indicator>
+  </definition>
+</ioc>"""
+        return Response(xml_content, media_type="application/xml", headers={"Content-Disposition": f"attachment; filename={investigation.get('id', 'export')}.ioc"})
 
     raise HTTPException(status_code=400, detail="Unsupported export format")
 
@@ -117,7 +226,7 @@ def _pdf_report(investigation: dict, frame: pd.DataFrame):
     document = SimpleDocTemplate(output, pagesize=letter, rightMargin=32, leftMargin=32)
     styles = getSampleStyleSheet()
     story = [
-        Paragraph("IP Intelligence & Telecom Attribution Analyzer", styles["Title"]),
+        Paragraph("VoIP WireStream", styles["Title"]),
         Paragraph(f"Investigation: {investigation['filename']}", styles["Normal"]),
         Paragraph(f"Created: {investigation['created_at']}", styles["Normal"]),
         Spacer(1, 12),

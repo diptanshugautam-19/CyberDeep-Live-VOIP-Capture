@@ -1,17 +1,19 @@
 import logging
 import hashlib
+import os
 import shutil
 import uuid
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.exports import export_investigation
+from app.api.exports import export_investigation, export_investigation_data
 from app.correlation.engine import correlate_evidence
 from app.core.config import APP_NAME, BASE_DIR, UPLOAD_DIR
 from app.core.logging import configure_logging
@@ -19,7 +21,17 @@ from app.enrichment.pipeline import analyze_records
 from app.parsers.base import ParserError
 from app.parsers.manager import parse_evidence
 from app.parsers.telecom_parser import parse_telecom_evidence
-from app.storage.database import get_investigation, init_db, list_investigations, save_investigation
+from app.storage.database import get_investigation, init_db, list_investigations, save_investigation, router
+
+import asyncio
+from fastapi import WebSocket, WebSocketDisconnect, Depends, Query, status
+from pydantic import BaseModel
+from app.core.auth import verify_token, verify_ws_ticket, create_ws_ticket
+from app.core.capture_manager import capture_manager
+from app.core.bridge import broadcast_manager, packet_bridge
+from app.core.flow_engine import flow_engine
+from app.core.enrichment import enrichment_engine
+from app.core.pipeline import packet_pipeline_handler
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -27,7 +39,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="CyberDeep Dashboard", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000", "http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -39,8 +51,286 @@ templates = Jinja2Templates(directory=BASE_DIR / "app" / "templates")
 
 
 @app.on_event("startup")
-def startup() -> None:
+async def startup() -> None:
     init_db()
+    flow_engine.start()
+    enrichment_engine.start()
+    packet_bridge.pipeline_handler = packet_pipeline_handler
+    packet_bridge.start(asyncio.get_event_loop())
+
+@app.on_event("shutdown")
+async def shutdown() -> None:
+    capture_manager.shutdown()
+    await flow_engine.stop()
+    await enrichment_engine.stop()
+    packet_bridge.stop()
+
+# ── VoIP WireStream Live Capture REST & WebSocket APIs ────────────────
+
+class StartCaptureRequest(BaseModel):
+    interface: str
+    filter_expr: str | None = None
+    promiscuous: bool = True
+
+@app.post("/api/auth/ticket", dependencies=[Depends(verify_token)])
+async def get_ws_ticket():
+    """Generates a TTL WebSocket authentication ticket."""
+    ticket = create_ws_ticket()
+    return {"ticket": ticket}
+
+@app.get("/api/interfaces", dependencies=[Depends(verify_token)])
+async def get_interfaces():
+    """Returns a list of capture-ready network interfaces."""
+    interfaces = capture_manager.get_interfaces()
+    return {"interfaces": interfaces}
+
+@app.post("/api/capture/start", dependencies=[Depends(verify_token)])
+async def start_capture(req: StartCaptureRequest):
+    """Starts live packet capture on the specified interface."""
+    try:
+        capture_manager.start_capture(
+            interface=req.interface,
+            bpf_filter=req.filter_expr or ""
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "started", "interface": req.interface}
+
+@app.post("/api/capture/stop", dependencies=[Depends(verify_token)])
+async def stop_capture():
+    """Stops the live packet capture sniffer."""
+    capture_manager.stop_capture()
+    return {"status": "stopped"}
+
+@app.post("/api/capture/pause", dependencies=[Depends(verify_token)])
+async def pause_capture():
+    """Pauses live packet processing (capturing to buffer continues)."""
+    capture_manager.pause_capture()
+    return {"status": "paused"}
+
+@app.post("/api/capture/resume", dependencies=[Depends(verify_token)])
+async def resume_capture():
+    """Resumes live packet processing."""
+    capture_manager.resume_capture()
+    return {"status": "resumed"}
+
+@app.get("/api/capture/status", dependencies=[Depends(verify_token)])
+async def get_capture_status():
+    """Retrieves real-time packet statistics."""
+    stats = capture_manager.get_status()
+    return {
+        "is_capturing": capture_manager.is_capturing,
+        "is_paused": capture_manager.is_paused,
+        **stats
+    }
+
+@app.post("/api/capture/reset", dependencies=[Depends(verify_token)])
+async def reset_capture():
+    """Forces the capture engine to release resources and reset capturing flag."""
+    try:
+        capture_manager.is_capturing = False
+        capture_manager.is_paused = False
+        if capture_manager.sniffer:
+            try:
+                capture_manager.sniffer.stop()
+            except:
+                pass
+            capture_manager.sniffer = None
+        if capture_manager.pcap_writer:
+            try:
+                capture_manager.pcap_writer.close()
+            except:
+                pass
+            capture_manager.pcap_writer = None
+        return {"status": "reset_success"}
+    except Exception as e:
+        logger.error(f"Failed to reset capture engine: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/capture/promote", dependencies=[Depends(verify_token)])
+async def promote_capture(title: str = Query(...)):
+    """Saves the current live capture trace to the persistent investigations repository."""
+    # Promotes rolling temp file to a saved investigation
+    if not capture_manager.temp_pcap_path.exists():
+        raise HTTPException(status_code=404, detail="No capture trace exists to promote.")
+        
+    # Analyze the PCAP using offline pipeline
+    # Wait! We need to copy the rolling file to a safe place
+    import re
+    temp_id = str(uuid.uuid4())
+    safe_title = re.sub(r'[^a-zA-Z0-9_\-]', '_', title)
+    dest_pcap = UPLOAD_DIR / f"{temp_id}_{safe_title}.pcap"
+    try:
+        shutil.copy2(capture_manager.temp_pcap_path, dest_pcap)
+        # Parse and analyze the promoted PCAP
+        records = parse_evidence(dest_pcap)
+        analysis = analyze_records(records)
+        db_investigation_id = save_investigation(title, analysis)
+        _cleanup_uploads(keep=10)
+    except Exception as e:
+        logger.error(f"Failed to promote capture trace: {e}")
+        raise HTTPException(status_code=500, detail=f"Promotion failed: {str(e)}")
+        
+    return {"status": "promoted", "id": db_investigation_id}
+
+@app.get("/api/capture/stream/follow", dependencies=[Depends(verify_token)])
+async def follow_stream(flow_id: str = Query(...)):
+    """Reconstructs TCP/UDP payload streams in chronological order."""
+    # Find all payloads in payloads.sqlite3 linked to this flow_id
+    # Wait, payloads is linked to packet_id. Packet is in packets table.
+    # So we join packets and payloads on packet_id, filtering on flow_id.
+    try:
+        rows = router.execute(
+            "payloads",
+            """SELECT p.timestamp, pl.payload_preview, pl.payload_blob, p.source_port, p.destination_port
+            FROM packets p
+            JOIN payloads pl ON p.id = pl.packet_id
+            WHERE p.flow_id = ?
+            ORDER BY p.packet_index ASC""",
+            (flow_id,)
+        )
+        # Decompress payloads and reconstruct stream
+        stream_data = []
+        for r in rows:
+            blob = r["payload_blob"]
+            # Decompress if compressed
+            try:
+                import zlib
+                decompressed = zlib.decompress(blob).decode("utf-8", errors="replace")
+            except Exception:
+                decompressed = r["payload_preview"]
+            
+            stream_data.append({
+                "timestamp": r["timestamp"],
+                "sport": r["source_port"],
+                "dport": r["destination_port"],
+                "payload": decompressed
+            })
+        return {"flow_id": flow_id, "stream": stream_data}
+    except Exception as e:
+        logger.error(f"Failed to follow stream: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+@app.get("/api/capture/export", dependencies=[Depends(verify_token)])
+async def export_capture(format: str = Query(...)):
+    """Exports the current live capture session into multiple forensic formats."""
+    if not capture_manager.temp_pcap_path or not capture_manager.temp_pcap_path.exists():
+        raise HTTPException(status_code=404, detail="No capture trace exists to export.")
+        
+    if format.lower() == "pcap":
+        return FileResponse(
+            capture_manager.temp_pcap_path,
+            media_type="application/octet-stream",
+            filename=f"capture_{capture_manager.session_id}.pcap"
+        )
+        
+    try:
+        records = parse_evidence(capture_manager.temp_pcap_path)
+        analysis = analyze_records(records)
+        analysis["id"] = capture_manager.session_id
+        analysis["filename"] = f"Live Capture ({capture_manager.session_id})"
+        analysis["created_at"] = datetime.now(timezone.utc).isoformat()
+    except Exception as e:
+        logger.error(f"Failed to analyze live PCAP for export: {e}")
+        raise HTTPException(status_code=500, detail=f"Analysis for export failed: {str(e)}")
+        
+    try:
+        from fastapi import Response
+        return export_investigation_data(analysis, format.lower())
+    except Exception as e:
+        logger.error(f"Export generation failed for format {format}: {e}")
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+class DpiRuleRequest(BaseModel):
+    name: str
+    pattern: str
+    severity: str
+    category: str
+
+@app.post("/api/rules", dependencies=[Depends(verify_token)])
+async def add_dpi_rule(req: DpiRuleRequest):
+    """Saves a new user-defined DPI regex rule to users.sqlite3."""
+    try:
+        router.execute(
+            "dpi_rules",
+            "INSERT INTO dpi_rules (name, pattern, severity, category) VALUES (?, ?, ?, ?)",
+            (req.name, req.pattern, req.severity, req.category)
+        )
+        return {"status": "saved"}
+    except Exception as e:
+        logger.error(f"Failed to save dynamic rule: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class SavedFilterRequest(BaseModel):
+    name: str
+    expression: str
+
+@app.post("/api/filters", dependencies=[Depends(verify_token)])
+async def save_filter(req: SavedFilterRequest):
+    """Saves a custom search/display filter to users.sqlite3."""
+    try:
+        now_str = datetime.now(timezone.utc).isoformat()
+        router.execute(
+            "saved_filters",
+            "INSERT INTO saved_filters (name, expression, created_at) VALUES (?, ?, ?)",
+            (req.name, req.expression, now_str)
+        )
+        return {"status": "saved"}
+    except Exception as e:
+        logger.error(f"Failed to save filter: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/filters", dependencies=[Depends(verify_token)])
+async def get_saved_filters():
+    """Retrieves all user-saved search/display filters."""
+    try:
+        rows = router.execute("saved_filters", "SELECT id, name, expression, created_at FROM saved_filters ORDER BY id DESC")
+        return {"filters": rows}
+    except Exception as e:
+        logger.error(f"Failed to load filters: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.websocket("/api/capture/live")
+async def websocket_capture_live(websocket: WebSocket, ticket: str = Query(...)):
+    """Handles real-time WebSocket packet & alert streaming with client token validation."""
+    try:
+        verify_ws_ticket(ticket)
+    except Exception as e:
+        logger.warning(f"WebSocket ticket validation failed: {e}")
+        # Close connection with policy violation code
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+        
+    await websocket.accept()
+    
+    # Register connection in broadcast manager
+    pq = await broadcast_manager.register(websocket)
+    
+    # Spawn sender loop as a task
+    sender_task = asyncio.create_task(broadcast_manager.sender_loop(websocket, pq))
+    
+    try:
+        while True:
+            # Keep connection open and process incoming control requests (e.g. sync)
+            data = await websocket.receive_json()
+            if data.get("action") == "sync":
+                # Reconnection state sync
+                stats = capture_manager.get_status()
+                await websocket.send_json({
+                    "type": "sync_response",
+                    "status": "active" if capture_manager.is_capturing else "stopped",
+                    "total_packets": stats.get("packet_count", 0),
+                    "timestamp": time.time()
+                })
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+    finally:
+        sender_task.cancel()
+        await broadcast_manager.unregister(websocket)
 
 
 # ── CyberDeep Dashboard (homepage) ──────────────────────────────────
@@ -58,6 +348,38 @@ async def ip_intel_tool(request: Request):
         "index.html",
         {"request": request, "app_name": APP_NAME, "api_base_url": ""},
     )
+
+@app.get("/tool/live", response_class=HTMLResponse)
+async def live_capture_tool():
+    """Serve the VoIP WireStream live capture interface with cache-busting and no-cache headers."""
+    html_path = BASE_DIR / "dist" / "src" / "live" / "index.html"
+    if not html_path.exists():
+        raise HTTPException(status_code=404, detail="Frontend assets not compiled. Run npm run build first.")
+    
+    with open(html_path, "r", encoding="utf-8") as f:
+        content = f.read()
+        
+    # Dynamically inject cache busters to the bundle URLs
+    import time
+    import re
+    timestamp = int(time.time())
+    content = re.sub(
+        r'src="/dist/assets/(live-[a-zA-Z0-9_\-]+)\.js"',
+        rf'src="/dist/assets/\1.js?v={timestamp}"',
+        content
+    )
+    content = re.sub(
+        r'href="/dist/assets/(live-[a-zA-Z0-9_\-]+)\.css"',
+        rf'href="/dist/assets/\1.css?v={timestamp}"',
+        content
+    )
+    
+    headers = {
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0"
+    }
+    return HTMLResponse(content=content, status_code=200, headers=headers)
 
 
 @app.post("/api/upload")
@@ -110,11 +432,11 @@ def _analyze_uploaded_files(files: list[UploadFile]) -> dict:
             shutil.copyfileobj(upload.file, handle)
         paths.append(target)
     result = _analyze_paths(paths)
-    _cleanup_uploads(keep=5)
+    _cleanup_uploads(keep=10)
     return result
 
 
-def _cleanup_uploads(keep: int = 5) -> None:
+def _cleanup_uploads(keep: int = 10) -> None:
     """Keep only the most recent `keep` files in UPLOAD_DIR, delete the rest."""
     try:
         all_files = sorted(UPLOAD_DIR.iterdir(), key=lambda f: f.stat().st_mtime, reverse=True)
@@ -222,7 +544,16 @@ def _analyze_paths(paths: list[Path]) -> dict:
             "mos_score": mos_val,
             "mos_label": mos_lbl,
             "status": status_text,
-            "route": route
+            "route": route,
+            "participant_public_ip": call.get("participant_public_ip") or "Not Observable",
+            "remote_participant_ip": call.get("remote_participant_ip") or "Not Observable",
+            "participant_private_ip": call.get("participant_private_ip") or "Not Observable",
+            "media_path": call.get("media_path") or "Unknown",
+            "attribution_reason": call.get("attribution_reason") or "",
+            "attribution_confidence": call.get("attribution_confidence") or 0,
+            "participant_isp": call.get("participant_isp") or "Not Observable",
+            "participant_city": call.get("participant_city") or "",
+            "participant_country": call.get("participant_country") or ""
         })
     correlation["voip_sessions"] = voip_sessions
 
@@ -248,6 +579,35 @@ def _analyze_paths(paths: list[Path]) -> dict:
         pkt_row["decoded_summary"] = _decode_packet_summary(pkt_row)
         pkt_row["decoded_detail"] = _decode_packet_detail(pkt_row)
         pkt_row["decoded_fields"] = _decode_packet_fields(pkt_row)
+
+    # Set root-level participant attribution results
+    primary_session = None
+    if voip_sessions:
+        # Prioritize sessions with observable private IP first, then observable public IP, then fallback to first session
+        observable_sessions = [
+            s for s in voip_sessions
+            if (s.get("participant_private_ip") and s["participant_private_ip"] != "Not Observable") or
+               (s.get("participant_public_ip") and s["participant_public_ip"] != "Not Observable")
+        ]
+        if observable_sessions:
+            primary_session = observable_sessions[0]
+        else:
+            primary_session = voip_sessions[0]
+            
+    if primary_session:
+        analysis["participant_public_ip"] = primary_session.get("participant_public_ip") or "Not Observable"
+        analysis["remote_participant_ip"] = primary_session.get("remote_participant_ip") or "Not Observable"
+        analysis["participant_private_ip"] = primary_session.get("participant_private_ip") or "Not Observable"
+        analysis["participant_isp"] = primary_session.get("participant_isp") or "Not Observable"
+        analysis["participant_city"] = primary_session.get("participant_city") or ""
+        analysis["participant_country"] = primary_session.get("participant_country") or ""
+    else:
+        analysis["participant_public_ip"] = "Not Observable"
+        analysis["remote_participant_ip"] = "Not Observable"
+        analysis["participant_private_ip"] = "Not Observable"
+        analysis["participant_isp"] = "Not Observable"
+        analysis["participant_city"] = ""
+        analysis["participant_country"] = ""
 
     analysis["summary"]["total_packets"] = analysis.get("raw_packet_count", 0)
     return analysis
@@ -580,8 +940,30 @@ async def threat_intel_status():
 @app.get("/api/geoip/lookup")
 async def geoip_lookup(ip: str):
     """GeoIP lookup resolving via parallel provider stack and offline caches."""
+    import ipaddress
     from app.enrichment.telecom import enrich_telecom
-    res = enrich_telecom(ip)
+    try:
+        ipaddress.ip_address(ip)
+        res = enrich_telecom(ip)
+    except ValueError:
+        return {
+            "status": "fail",
+            "query": ip,
+            "message": "Invalid IP address",
+            "country": "Not Observable",
+            "countryCode": "",
+            "regionName": "Not Observable",
+            "city": "Not Observable",
+            "isp": "Not Observable",
+            "org": "Not Observable",
+            "as": "AS0",
+            "asname": "Not Observable",
+            "lat": 0.0,
+            "lon": 0.0,
+            "timezone": "UTC",
+            "proxy": False,
+            "hosting": False
+        }
     return {
         "status": "success",
         "query": ip,
@@ -636,6 +1018,108 @@ async def subdomain_engines():
     return SubdomainScanner.get_engines()
 
 
+# ── TShark MCP Integration APIs ────────────────────────────────────
+import shutil
+from app.integrations.tshark_mcp.service import tshark_mcp_service
+from app.analysis.ai_investigator import AIInvestigator
+
+def _get_session_or_404(session_id: str) -> dict:
+    rows = router.execute("investigations", "SELECT case_json FROM investigations WHERE id = ?", (session_id,))
+    if not rows:
+        raise HTTPException(status_code=404, detail="Investigation session not found.")
+    return json.loads(rows[0]["case_json"])
+
+@app.post("/api/mcp/analyze")
+async def mcp_analyze(file: UploadFile = None, pcap_path: str = None):
+    if file:
+        file_id = str(uuid.uuid4())
+        dest_pcap = UPLOAD_DIR / f"{file_id}_{file.filename}"
+        with open(dest_pcap, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        pcap_path = str(dest_pcap)
+    elif not pcap_path:
+        raise HTTPException(status_code=400, detail="Either file upload or local pcap_path must be provided.")
+    
+    try:
+        session = await tshark_mcp_service.analyze_file(pcap_path)
+        return session
+    except Exception as e:
+        logger.error(f"Analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/mcp/status")
+async def mcp_status():
+    tshark_exists = os.path.exists(r"D:\Wireshark\tshark.exe")
+    return {
+        "status": "online" if tshark_exists else "offline",
+        "tshark_path": r"D:\Wireshark\tshark.exe",
+        "tshark_available": tshark_exists
+    }
+
+@app.post("/api/mcp/chat")
+async def mcp_chat(req: dict):
+    session_id = req.get("session_id")
+    message = req.get("message")
+    if not session_id or not message:
+        raise HTTPException(status_code=400, detail="session_id and message are required.")
+    res = await AIInvestigator.chat_investigate(session_id, message)
+    return res
+
+@app.get("/api/mcp/sip")
+async def mcp_sip(session_id: str):
+    session = _get_session_or_404(session_id)
+    return {"sip_calls": session.get("sip_calls", [])}
+
+@app.get("/api/mcp/stun")
+async def mcp_stun(session_id: str):
+    session = _get_session_or_404(session_id)
+    return {"stun_transactions": session.get("stun_transactions", [])}
+
+@app.get("/api/mcp/turn")
+async def mcp_turn(session_id: str):
+    session = _get_session_or_404(session_id)
+    return {"turn_allocations": session.get("turn_allocations", [])}
+
+@app.get("/api/mcp/ice")
+async def mcp_ice(session_id: str):
+    session = _get_session_or_404(session_id)
+    return {"ice_sessions": session.get("ice_sessions", [])}
+
+@app.get("/api/mcp/rtp")
+async def mcp_rtp(session_id: str):
+    session = _get_session_or_404(session_id)
+    return {"rtp_sessions": session.get("rtp_sessions", [])}
+
+@app.get("/api/mcp/rtcp")
+async def mcp_rtcp(session_id: str):
+    return {"rtcp_sessions": []}
+
+@app.get("/api/mcp/report")
+async def mcp_report(session_id: str):
+    session = _get_session_or_404(session_id)
+    return {
+        "session_id": session_id,
+        "sip_count": len(session.get("sip_calls", [])),
+        "rtp_count": len(session.get("rtp_sessions", [])),
+        "ice_count": len(session.get("ice_sessions", [])),
+        "endpoints_count": len(session.get("endpoints", [])),
+        "conversations_count": len(session.get("conversations", []))
+    }
+
+@app.get("/api/mcp/timeline")
+async def mcp_timeline(session_id: str):
+    session = _get_session_or_404(session_id)
+    return {"timeline": session.get("timeline", [])}
+
+@app.get("/api/mcp/protocols")
+async def mcp_protocols(session_id: str):
+    session = _get_session_or_404(session_id)
+    proto_counts = {}
+    for p in session.get("timeline", []):
+        proto = p.get("protocol", "UNKNOWN")
+        proto_counts[proto] = proto_counts.get(proto, 0) + 1
+    return {"protocols": [{"protocol": k, "count": v} for k, v in proto_counts.items()]}
+
 # ── Static file mounts (MUST be after all route definitions) ────────
 # Serve data/ directory (police_stations_master.csv, etc.)
 app.mount("/data", StaticFiles(directory=BASE_DIR / "data"), name="data")
@@ -654,3 +1138,4 @@ if _docs_dir.is_dir():
 # This serves app.js, style.css, ip_data.js, mcc_data.js, sms_company_data.js, etc.
 # Because it's mounted last, explicit API routes above always take priority.
 app.mount("/", StaticFiles(directory=BASE_DIR, html=True), name="root")
+

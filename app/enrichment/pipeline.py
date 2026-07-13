@@ -641,7 +641,24 @@ def resolve_mac_category(mac: str | None) -> str:
     return _resolve_mac(mac)[1]
 
 
+def enrichment_gate(endpoints: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Splits endpoints into (eligible, excluded) before any enrichment call is made."""
+    eligible, excluded = [], []
+    for ep in endpoints:
+        if ep.get("tier") == 1 or ep.get("role") == "UNKNOWN":
+            excluded.append(ep)
+        else:
+            eligible.append(ep)
+    return eligible, excluded
+
+
 def analyze_records(records: list[ConnectionRecord]) -> dict:
+    from app.analysis.vpn_classifier import ClassificationEngine, EndpointRole, ROLE_TIERS
+    from pathlib import Path
+    
+    raw_records = [r.to_dict() if hasattr(r, "to_dict") else dict(r) for r in records]
+    classifier = ClassificationEngine(Path("registry/interfaces"))
+    
     threat_manager = ThreatIntelManager()
     grouped: dict[str, list[dict]] = defaultdict(list)
     packet_rows: list[dict] = []
@@ -649,12 +666,49 @@ def analyze_records(records: list[ConnectionRecord]) -> dict:
 
     # Pre-cache telecom enrichment for all unique destination IPs to avoid duplicate API/GeoIP hits
     unique_dsts = {r.destination_ip for r in records if r.destination_ip}
+    unique_sources = {r.source_ip for r in records if r.source_ip}
+    all_ips = unique_dsts | unique_sources
+    
+    # Classify all unique IPs
+    classified_endpoints = {}
+    for ip in all_ips:
+        role, confidence, matched_sig, paired_addr, evidence = classifier.classify(ip, raw_records)
+        tier = ROLE_TIERS[role]
+        classified_endpoints[ip] = {
+            "ip": ip,
+            "role": role.value,
+            "confidence": float(confidence),
+            "tier": tier,
+            "matched_signature": matched_sig,
+            "paired_address": paired_addr,
+            "evidence": evidence
+        }
+        
+    eligible, excluded = enrichment_gate(list(classified_endpoints.values()))
+    eligible_ips = {ep["ip"] for ep in eligible}
+    
     telecom_cache = {}
     for ip in unique_dsts:
-        try:
-            telecom_cache[ip] = enrich_telecom(ip)
-        except Exception:
-            telecom_cache[ip] = {}
+        if ip in eligible_ips:
+            try:
+                telecom_cache[ip] = enrich_telecom(ip)
+            except Exception:
+                telecom_cache[ip] = {}
+        else:
+            telecom_cache[ip] = {
+                "isp": "Capture Internal",
+                "asn": "AS0",
+                "asn_number": 0,
+                "asn_org": "Capture Internal / VPN",
+                "network_prefix": "Unknown",
+                "country": "Local",
+                "region": "Capture Internal",
+                "city": "Local",
+                "latitude": None,
+                "longitude": None,
+                "hostname": "",
+                "ip_source": "Local GeoIP"
+            }
 
     from app.dpi.engine import dpi_engine
 
@@ -701,13 +755,36 @@ def analyze_records(records: list[ConnectionRecord]) -> dict:
 
     enriched = []
     for destination_ip, rows in grouped.items():
-        telecom = enrich_telecom(destination_ip)
+        telecom = telecom_cache.get(destination_ip) or {
+            "isp": "Capture Internal",
+            "asn": "AS0",
+            "asn_number": 0,
+            "asn_org": "Capture Internal / VPN",
+            "network_prefix": "Unknown",
+            "country": "Local",
+            "region": "Capture Internal",
+            "city": "Local",
+            "latitude": None,
+            "longitude": None,
+            "hostname": "",
+            "ip_source": "Local GeoIP"
+        }
         top_port = _most_common([row.get("destination_port") for row in rows if row.get("destination_port")])
         top_src_port = _most_common([row.get("source_port") for row in rows if row.get("source_port")])
         protocol = _most_common([row.get("protocol") for row in rows if row.get("protocol")]) or "UNKNOWN"
-        service = identify_service(destination_ip, telecom["asn_number"], top_port, telecom["asn_org"])
+        service = identify_service(destination_ip, telecom.get("asn_number"), top_port, telecom.get("asn_org"))
         port_info = port_intelligence(top_port, protocol)
-        threat = threat_manager.lookup(destination_ip)
+        
+        if destination_ip in eligible_ips:
+            threat = threat_manager.lookup(destination_ip)
+        else:
+            threat = {
+                "malicious": False,
+                "reputation_score": 0,
+                "abuse_reports": 0,
+                "threat_category": None
+            }
+            
         timestamps = [_parse_timestamp(row.get("timestamp")) for row in rows if row.get("timestamp")]
         timestamps = [stamp for stamp in timestamps if stamp]
         first_seen = min(timestamps).isoformat() if timestamps else ""
@@ -804,6 +881,12 @@ def analyze_records(records: list[ConnectionRecord]) -> dict:
                 "unusual_port": port_info["is_unusual"],
                 "port_notes": port_info["notes"],
                 **threat,
+                "role": classified_endpoints.get(destination_ip, {}).get("role", "UNKNOWN"),
+                "role_confidence": int(classified_endpoints.get(destination_ip, {}).get("confidence", 0.0) * 100),
+                "role_reasons": classified_endpoints.get(destination_ip, {}).get("evidence", []),
+                "tier": classified_endpoints.get(destination_ip, {}).get("tier", 4),
+                "matched_signature": classified_endpoints.get(destination_ip, {}).get("matched_signature"),
+                "paired_address": classified_endpoints.get(destination_ip, {}).get("paired_address"),
             }
         )
 
@@ -1113,7 +1196,10 @@ def _parse_timestamp(value: str) -> datetime | None:
         pass
 
     try:
-        return date_parser.parse(str(value))
+        parsed = date_parser.parse(str(value))
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
     except Exception:
         return None
 

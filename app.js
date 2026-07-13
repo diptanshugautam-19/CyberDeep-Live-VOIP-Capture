@@ -3640,7 +3640,7 @@ const TOOLS_REGISTRY = [
   // =====================================================================
   {
     id: "ip-intel-analyzer",
-    name: "IP Intelligence",
+    name: "VoIP WireStream",
     category: "Network Forensics",
     icon: "radar",
     status: "Ready",
@@ -3650,7 +3650,7 @@ const TOOLS_REGISTRY = [
       <div class="space-y-4">
         <div class="cyber-card p-5 border border-opacity-20 border-accent-blue">
           <h3 class="text-base font-bold font-mono text-accent-blue mb-3 flex items-center gap-2">
-            <i data-lucide="radar" class="w-5 h-5"></i> IP INTELLIGENCE & TELECOM ATTRIBUTION
+            <i data-lucide="radar" class="w-5 h-5"></i> VoIP WireStream
           </h3>
           <p class="text-xs text-text-secondary mb-4">Upload evidence files for server-side analysis. Supports PCAP, PCAPNG, CSV, TSV, LOG, TXT.</p>
           <div id="ipintel-dropzone" class="border-2 border-dashed border-white border-opacity-10 rounded-lg p-6 text-center cursor-pointer hover:border-accent-blue hover:border-opacity-40 transition-all mb-3">
@@ -3962,7 +3962,7 @@ const TOOLS_REGISTRY = [
 
       // === FILTER LISTENERS ===
       ['ipintel-search','ipintel-role-filter','ipintel-service-filter','ipintel-threat-filter','ipintel-port-filter'].forEach(id=>{const el=document.getElementById(id);if(el){el.addEventListener('input',renderTable);el.addEventListener('change',renderTable);}});
-      app.logTerminal('IP Intelligence initialized. Full feature set: Analytics Band (Host Inventory, Sessions, Flows, Protocol Mix, VoIP), Overview, Timeline, Threat, WHOIS, DNS, ASN, Correlation, Report, Flows, Packets, Notes. Backend: /api/upload', 'success');
+      app.logTerminal('VoIP WireStream initialized. Full feature set: Analytics Band (Host Inventory, Sessions, Flows, Protocol Mix, VoIP), Overview, Timeline, Threat, WHOIS, DNS, ASN, Correlation, Report, Flows, Packets, Notes. Backend: /api/upload', 'success');
       lucide.createIcons();
     }
   },

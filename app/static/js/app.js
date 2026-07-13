@@ -485,7 +485,7 @@ function renderDetailPanel(row) {
           ["Source", row.source_ips?.join(", ") || row.source_ip || "Unknown"],
           ["Hostname", row.hostname || "Not resolved"],
           ["Port", portLabel(row)],
-          ["IP Intelligence Source", row.ip_source || "Local GeoIP"]
+          ["VoIP WireStream Source", row.ip_source || "Local GeoIP"]
         ])}
         ${detailCard("Role Analysis", [
           ["Primary Role", row.role || "client device"],

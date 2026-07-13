@@ -45,6 +45,7 @@ TABLE_MAP = {
     "subdomain_scans": DNS_DB_PATH,
     "user_preferences": USERS_DB_PATH,
     "saved_filters": USERS_DB_PATH,
+    "dpi_rules": USERS_DB_PATH,
     "temp_cache": CACHE_DB_PATH,
     "sessions": FLOWS_DB_PATH,
     "rtp_streams": FLOWS_DB_PATH,
@@ -248,6 +249,13 @@ SCHEMAS = {
             expression TEXT NOT NULL,
             created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS dpi_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            pattern TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            category TEXT NOT NULL
+        );
     """,
     CACHE_DB_PATH: SCHEMA_INFO_SCHEMA + """
         CREATE TABLE IF NOT EXISTS temp_cache (
@@ -281,7 +289,11 @@ SCHEMAS = {
             jitter REAL DEFAULT 0.0,
             loss REAL DEFAULT 0.0,
             mos REAL DEFAULT 0.0,
-            classification TEXT
+            classification TEXT,
+            ja3_client TEXT,
+            ja3_server TEXT,
+            ja4_client TEXT,
+            ja4_server TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_sessions_investigation ON sessions(investigation_id);
         CREATE TABLE IF NOT EXISTS rtp_streams (
@@ -303,7 +315,9 @@ SCHEMAS = {
             status_code TEXT,
             user_agent TEXT,
             sdp_media_ip TEXT,
-            sdp_media_port INTEGER
+            sdp_media_port INTEGER,
+            joined_mid_session INTEGER DEFAULT 0,
+            confidence_tier TEXT
         );
         CREATE TABLE IF NOT EXISTS ice_sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -312,7 +326,9 @@ SCHEMAS = {
             state TEXT,
             candidate_type TEXT,
             relay_server TEXT,
-            nat_type_guess TEXT
+            nat_type_guess TEXT,
+            joined_mid_session INTEGER DEFAULT 0,
+            confidence_tier TEXT
         );
     """
 }
@@ -417,6 +433,30 @@ def init_db() -> None:
                     (1, datetime.now(timezone.utc).isoformat(), datetime.now(timezone.utc).isoformat())
                 )
             conn.commit()
+
+    # Dynamic schema migrations for existing databases
+    try:
+        with sqlite3.connect(FLOWS_DB_PATH, timeout=10) as conn:
+            try:
+                conn.execute("ALTER TABLE sip_dialogs ADD COLUMN joined_mid_session INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE sip_dialogs ADD COLUMN confidence_tier TEXT")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE ice_sessions ADD COLUMN joined_mid_session INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE ice_sessions ADD COLUMN confidence_tier TEXT")
+            except sqlite3.OperationalError:
+                pass
+            conn.commit()
+    except Exception as e:
+        logger.error(f"Error during schema migrations: {e}")
+
     logger.info("Modular database layout schemas initialized successfully.")
 
 _endpoint_cache = {}

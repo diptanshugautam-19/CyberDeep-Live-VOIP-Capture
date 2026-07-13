@@ -1,5 +1,24 @@
 import struct
 import math
+import logging
+
+logger = logging.getLogger(__name__)
+
+# Common RTP payload type to codec name mappings
+PAYLOAD_TYPE_NAMES = {
+    0: "PCMU (G.711μ)",
+    3: "GSM",
+    4: "G.723",
+    8: "PCMA (G.711A)",
+    9: "G.722",
+    18: "G.729",
+    26: "JPEG",
+    31: "H.261",
+    32: "MPV",
+    33: "MP2T",
+    34: "H.263",
+    # Dynamic range (96-127) — codec name comes from SDP a=rtpmap
+}
 
 # G.711 PCMU/PCMA is 8000Hz. Opus is typically 48000Hz. G.722 is 16000Hz.
 PAYLOAD_SAMPLE_RATES = {
@@ -15,9 +34,9 @@ PAYLOAD_SAMPLE_RATES = {
 
 
 def parse_rtp_header(payload_bytes: bytes) -> dict | None:
-    """Parse RTP packet header.
+    """Parse RTP packet header only (no QoS/jitter/loss calculations).
 
-    RTP Header format:
+    RTP Header format (RFC 3550):
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -27,6 +46,10 @@ def parse_rtp_header(payload_bytes: bytes) -> dict | None:
     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     |           synchronization source (SSRC) identifier            |
     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+    Returns dict with version, padding, extension, cc, marker, payload_type,
+    sequence_number, timestamp, ssrc, and header_length. Returns None if
+    the payload is not a valid RTP packet.
     """
     if len(payload_bytes) < 12:
         return None
@@ -46,9 +69,16 @@ def parse_rtp_header(payload_bytes: bytes) -> dict | None:
     marker = (m_pt & 0x80) >> 7
     payload_type = m_pt & 0x7F
 
+    # Filter out false positives: PT should be in standard or dynamic range
+    if not ((0 <= payload_type <= 34) or (96 <= payload_type <= 127)):
+        return None
+
     seq_num = struct.unpack(">H", payload_bytes[2:4])[0]
     timestamp = struct.unpack(">I", payload_bytes[4:8])[0]
     ssrc = struct.unpack(">I", payload_bytes[8:12])[0]
+
+    # Resolve codec name for well-known static payload types
+    codec_name = PAYLOAD_TYPE_NAMES.get(payload_type, f"Dynamic({payload_type})")
 
     return {
         "version": version,
@@ -57,6 +87,7 @@ def parse_rtp_header(payload_bytes: bytes) -> dict | None:
         "cc": cc,
         "marker": bool(marker),
         "payload_type": payload_type,
+        "codec_name": codec_name,
         "sequence_number": seq_num,
         "timestamp": timestamp,
         "ssrc": ssrc,
@@ -73,15 +104,7 @@ def compute_qos_metrics(
 ) -> dict:
     """Compute QoS metrics (Jitter, Packet Loss, MOS) from packet streams.
 
-    Args:
-        sequence_numbers: List of RTP sequence numbers
-        timestamps: List of RTP packet timestamps
-        arrival_timestamps: List of arrival epoch times (float seconds)
-        payload_types: List of payload types per packet
-        latency_ms: One-way network latency estimate in milliseconds (default 30ms)
-
-    Returns:
-        QosMetrics dict containing jitter_ms, packet_loss_pct, mos_score, and mos_label
+    Exported for backward compatibility with the offline traffic analyzer.
     """
     if not sequence_numbers or len(sequence_numbers) < 2:
         return {
@@ -95,10 +118,8 @@ def compute_qos_metrics(
     seq_min = min(sequence_numbers)
     seq_max = max(sequence_numbers)
 
-    # Handle sequence number rollover (16-bit unsigned int wraps at 65535)
-    # If the span is extremely large, assume a rollover happened
+    # Handle sequence number rollover (16-bit wraps)
     if seq_max - seq_min > 40000:
-        # Simple rollover normalization
         adjusted_seqs = []
         for s in sequence_numbers:
             adjusted_seqs.append(s + 65536 if s < 32768 else s)
@@ -112,12 +133,10 @@ def compute_qos_metrics(
 
     # Jitter calculation (RFC 3550)
     jitter = 0.0
-    # Guess sample rate from the most common payload type
     from collections import Counter
     common_pt = Counter(payload_types).most_common(1)[0][0]
     sample_rate = PAYLOAD_SAMPLE_RATES.get(common_pt, 8000)
 
-    # Sort inputs by sequence numbers to get chronologically correct spacing
     paired = sorted(
         zip(sequence_numbers, timestamps, arrival_timestamps),
         key=lambda x: x[0]
@@ -127,46 +146,37 @@ def compute_qos_metrics(
         prev_seq, prev_rtp, prev_arr = paired[i-1]
         curr_seq, curr_rtp, curr_arr = paired[i]
 
-        # Ignore rollovers or out-of-order packets for delta calculation
         if curr_seq != prev_seq + 1:
             continue
 
         time_delta_arrival = curr_arr - prev_arr
         time_delta_rtp = (curr_rtp - prev_rtp) / sample_rate
 
-        # Difference in transit time
         transit_diff = abs(time_delta_arrival - time_delta_rtp)
         jitter = jitter + (transit_diff - jitter) / 16.0
 
     jitter_ms = jitter * 1000.0
 
     # MOS Score estimation (ITU-T G.107 E-model approximation)
-    # Effective latency (d) = latency_ms + 2 * jitter_ms
     d = latency_ms + 2.0 * jitter_ms
 
-    # Impairment due to delay/jitter (Id)
     if d < 177.3:
         i_d = 0.024 * d
     else:
         i_d = 0.024 * d + 0.11 * (d - 177.3)
 
-    # Impairment due to packet loss (Ie)
-    # loss_fraction * 100 represents loss percentage
     loss_pct = loss_fraction * 100.0
     i_e = 30.0 + 70.0 * math.log(1.0 + 10.0 * loss_fraction) if loss_fraction > 0 else 0.0
 
-    # R-Factor calculation
     r = 94.2 - i_d - i_e
     r = max(0.0, min(100.0, r))
 
-    # Convert R-Factor to MOS Score
     if r == 0:
         mos = 1.0
     else:
         mos = 1.0 + 0.035 * r + 0.000007 * r * (r - 60.0) * (100.0 - r)
     mos = max(1.0, min(4.5, mos))
 
-    # Map MOS score to rating
     if mos >= 4.0:
         label = "Excellent"
     elif mos >= 3.0:

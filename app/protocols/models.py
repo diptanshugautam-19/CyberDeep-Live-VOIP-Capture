@@ -38,3 +38,13 @@ class VoipSession:
     start_time: str | None = None
     end_time: str | None = None
     protocol: str = "VoIP"
+    participant_public_ip: str | None = None
+    remote_participant_ip: str | None = None
+    participant_private_ip: str | None = None
+    media_path: str | None = None
+    attribution_reason: str | None = None
+    attribution_confidence: int = 0
+    participant_isp: str | None = None
+    participant_city: str | None = None
+    participant_country: str | None = None
+    endpoints: list[dict] = field(default_factory=list)

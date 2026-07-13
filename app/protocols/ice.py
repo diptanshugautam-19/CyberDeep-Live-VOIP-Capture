@@ -26,6 +26,8 @@ class EndpointIdentity:
     relay_ip: str | None = None    # from 'relay' XOR-RELAYED-ADDRESS
     attribution_confidence: AttributionConfidence = "unresolved"
     nat_type_guess: NatTypeGuess = "unknown"
+    ip: str | None = None
+    port: int | None = None
 
 
 class IceStateMachine:

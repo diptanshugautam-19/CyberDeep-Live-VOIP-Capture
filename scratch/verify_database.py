@@ -78,7 +78,7 @@ EXPECTED_TABLES = {
     GEOIP_DB_PATH: ["schema_info", "endpoints", "geoip_lookup"],
     THREATINTEL_DB_PATH: ["schema_info", "threat_indicators"],
     DNS_DB_PATH: ["schema_info", "dns_cache", "subdomain_scans"],
-    USERS_DB_PATH: ["schema_info", "user_preferences", "saved_filters"],
+    USERS_DB_PATH: ["schema_info", "user_preferences", "saved_filters", "dpi_rules"],
     CACHE_DB_PATH: ["schema_info", "temp_cache", "alerts"],
     FLOWS_DB_PATH: ["schema_info", "sessions", "rtp_streams", "sip_dialogs", "ice_sessions"],
 }
@@ -158,6 +158,7 @@ EXPECTED_COLUMNS = {
     "operator_lookup": ["mcc", "mnc", "operator_name", "country"],
     "user_preferences": ["key", "value"],
     "saved_filters": ["id", "name", "expression", "created_at"],
+    "dpi_rules": ["id", "name", "pattern", "severity", "category"],
     "temp_cache": ["key", "value", "expires_at"],
     "rtp_streams": [
         "id", "session_flow_id", "ssrc", "payload_type",
@@ -166,10 +167,12 @@ EXPECTED_COLUMNS = {
     "sip_dialogs": [
         "id", "call_id", "from_uri", "to_uri", "method",
         "status_code", "user_agent", "sdp_media_ip", "sdp_media_port",
+        "joined_mid_session", "confidence_tier",
     ],
     "ice_sessions": [
         "id", "session_flow_id", "ufrag", "state",
         "candidate_type", "relay_server", "nat_type_guess",
+        "joined_mid_session", "confidence_tier",
     ],
     "schema_info": ["version", "created_at", "last_migration"],
 }
@@ -928,6 +931,7 @@ def section_09_router(c: Checker):
         "subdomain_scans":      DNS_DB_PATH,
         "user_preferences":     USERS_DB_PATH,
         "saved_filters":        USERS_DB_PATH,
+        "dpi_rules":            USERS_DB_PATH,
         "temp_cache":           CACHE_DB_PATH,
         "sessions":             FLOWS_DB_PATH,
         "rtp_streams":          FLOWS_DB_PATH,

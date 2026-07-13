@@ -864,21 +864,34 @@ def _voip_analysis(sessions: list[dict], rows_by_ip: dict[str, dict]) -> list[di
         # Let's see if we can link this call_id to any existing ufrag_key group
         sdp_ips = set()
         sdp_ports = set()
+        sdp_ufrags = set()
         for p in pkts:
             fields = p.get("decoded_fields") or {}
             if fields.get("sdp_media_ip"):
                 sdp_ips.add(fields["sdp_media_ip"])
             if fields.get("sdp_media_port"):
                 sdp_ports.add(fields["sdp_media_port"])
+            if fields.get("ice_ufrag"):
+                sdp_ufrags.add(fields["ice_ufrag"])
             for c in fields.get("sdp_candidates") or []:
                 if c.get("ip"):
                     sdp_ips.add(c["ip"])
                 if c.get("port"):
                     sdp_ports.add(c["port"])
+                if c.get("ufrag"):
+                    sdp_ufrags.add(c["ufrag"])
 
-        # Try to match with STUN packets IPs and ports
+        # Try to match with STUN packets IPs, ports, and ufrag
         matched_group = None
         for g in groups:
+            # 1. Match by ufrag (cryptographically precise)
+            if g["ufrag_key"] and sdp_ufrags:
+                g_ufrags = set(g["ufrag_key"].split(":"))
+                if sdp_ufrags & g_ufrags:
+                    matched_group = g
+                    break
+                    
+            # 2. Fallback to IP/port intersection
             stun_ips = {p.get("source_ip") for p in g["stun_packets"]} | {p.get("destination_ip") for p in g["stun_packets"]}
             stun_ports = {p.get("source_port") for p in g["stun_packets"]} | {p.get("destination_port") for p in g["stun_packets"]}
             if (sdp_ips & stun_ips) or (sdp_ports & stun_ports):
@@ -1012,6 +1025,15 @@ def _voip_analysis(sessions: list[dict], rows_by_ip: dict[str, dict]) -> list[di
             "call_id": session.call_id or session.ufrag_key or "N/A",
             "user_agent": next((msg.get("user_agent") for msg in g["sip_packets"] if msg.get("user_agent")), "WebRTC Client"),
             "evidence": all_pkts[:8],
+            "participant_public_ip": session.participant_public_ip or "Not Observable",
+            "remote_participant_ip": session.remote_participant_ip or "Not Observable",
+            "participant_private_ip": session.participant_private_ip or "Not Observable",
+            "media_path": session.media_path or "Unknown",
+            "attribution_reason": session.attribution_reason or "",
+            "attribution_confidence": session.attribution_confidence,
+            "participant_isp": session.participant_isp or "Not Observable",
+            "participant_city": session.participant_city or "",
+            "participant_country": session.participant_country or "",
         })
 
     # 2. Fallback: process remaining sessions that were not part of any reconstructed SIP/STUN call
@@ -1168,6 +1190,14 @@ def _voip_analysis(sessions: list[dict], rows_by_ip: dict[str, dict]) -> list[di
             ]
         }
 
+        # Resolve participant_private_ip fallback for these sessions
+        fallback_pvt_ip = "Not Observable"
+        from app.analysis.attribution_engine import _is_valid_private_ip
+        if caller_ip and _is_valid_private_ip(caller_ip):
+            fallback_pvt_ip = caller_ip
+        elif receiver_ip and _is_valid_private_ip(receiver_ip):
+            fallback_pvt_ip = receiver_ip
+
         calls.append(
             {
                 "call_type": call_type,
@@ -1188,6 +1218,15 @@ def _voip_analysis(sessions: list[dict], rows_by_ip: dict[str, dict]) -> list[di
                 "graph": graph_data,
                 "call_id": session.get("session_id", "N/A"),
                 "user_agent": "VoIP Client",
+                "participant_public_ip": "Not Observable",
+                "remote_participant_ip": "Not Observable",
+                "participant_private_ip": fallback_pvt_ip,
+                "media_path": "Unknown",
+                "attribution_reason": "No verifiable protocol evidence available.",
+                "attribution_confidence": 0,
+                "participant_isp": "Not Observable",
+                "participant_city": "",
+                "participant_country": "",
             }
         )
 
@@ -1302,7 +1341,9 @@ def _parse_time(value: str | None) -> datetime | None:
         return None
     try:
         parsed = date_parser.parse(str(value), fuzzy=True)
-        return parsed if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
     except Exception:
         return None
 
