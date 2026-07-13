@@ -18,7 +18,6 @@ export default function App() {
   const clearStore = useCaptureStore(state => state.clearStore)
   const setDroppedFrames = useCaptureStore(state => state.setDroppedFrames)
   
-  const [viewMode, setViewMode] = useState<'live' | 'offline'>('live')
   const [topTab, setTopTab] = useState('topology')
 
   const [bottomTab, setBottomTab] = useState('packets')
@@ -148,19 +147,10 @@ export default function App() {
         
         <div className="flex-1 flex flex-col gap-4 w-full px-2">
           <button 
-            onClick={() => setViewMode('live')}
-            className={`w-full aspect-square rounded flex items-center justify-center transition-colors ${viewMode === 'live' ? 'text-cyan-400 bg-cyan-950/20 border border-cyan-500/20' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'}`}
+            className="w-full aspect-square rounded flex items-center justify-center transition-colors text-cyan-400 bg-cyan-950/20 border border-cyan-500/20"
             title="Live Capture Mode"
           >
             <Activity className="w-5 h-5" />
-          </button>
-          
-          <button 
-            onClick={() => setViewMode('offline')}
-            className={`w-full aspect-square rounded flex items-center justify-center transition-colors ${viewMode === 'offline' ? 'text-cyan-400 bg-cyan-950/20 border border-cyan-500/20' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'}`}
-            title="Offline PCAP Mode (MCP)"
-          >
-            <FolderOpen className="w-5 h-5" />
           </button>
 
           <a href="/tool" className="w-full aspect-square rounded flex items-center justify-center text-slate-400 hover:text-slate-200 hover:bg-slate-900/50 transition-colors" title="Offline IP Intel Tool">
@@ -179,90 +169,84 @@ export default function App() {
       {/* 2. Main content area */}
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden p-4 gap-4">
         
-        {viewMode === 'live' ? (
-          <>
-            {/* Top Control Panel Banner */}
-            <ControlPanel 
-              apiKey={apiKey}
-              setApiKey={setApiKey}
-              onConnect={handleConnect}
-              onDisconnect={handleDisconnect}
-            />
+        {/* Top Control Panel Banner */}
+        <ControlPanel 
+          apiKey={apiKey}
+          setApiKey={setApiKey}
+          onConnect={handleConnect}
+          onDisconnect={handleDisconnect}
+        />
 
-            {/* Resizable Panel Workspace */}
-            <div className="flex-grow min-h-0 relative">
-              <PanelGroup direction="horizontal">
-                {/* Left Area (Workspace): Topo/Timeline + Packet List/Conversations */}
-                <Panel defaultSize={65} minSize={30}>
-                  <PanelGroup direction="vertical">
-                    {/* Top Half: 3D Topology or Timeline */}
-                    <Panel defaultSize={50} minSize={20}>
-                      <div className="h-full flex flex-col min-h-0 relative">
-                        <div className="absolute top-2 left-2 z-10 flex items-center gap-2 bg-black/40 p-1 rounded border border-white/10 backdrop-blur">
-                          <button onClick={() => setTopTab('topology')} className={`px-2 py-1 text-xs rounded transition-colors ${topTab === 'topology' ? 'bg-cyan-500/20 text-cyan-400' : 'text-white/60 hover:text-white/90'}`}>3D Topology</button>
-                          <button onClick={() => setTopTab('timeline')} className={`px-2 py-1 text-xs rounded transition-colors ${topTab === 'timeline' ? 'bg-cyan-500/20 text-cyan-400' : 'text-white/60 hover:text-white/90'}`}>Timeline</button>
-                          
-                          {topTab === 'topology' && (
-                            <div className="flex items-center gap-1 pl-2 border-l border-white/10">
-                              <span className="text-[10px] text-slate-400 font-mono">Render:</span>
-                              <button 
-                                onClick={() => setTopologyActive(!topologyActive)}
-                                className={`px-1.5 py-0.5 text-[9px] rounded font-semibold transition-colors ${topologyActive ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}
-                              >
-                                {topologyActive ? 'ON' : 'OFF'}
-                              </button>
-                            </div>
-                          )}
+        {/* Resizable Panel Workspace */}
+        <div className="flex-grow min-h-0 relative">
+          <PanelGroup direction="horizontal">
+            {/* Left Area (Workspace): Topo/Timeline + Packet List/Conversations */}
+            <Panel defaultSize={65} minSize={30}>
+              <PanelGroup direction="vertical">
+                {/* Top Half: 3D Topology or Timeline */}
+                <Panel defaultSize={50} minSize={20}>
+                  <div className="h-full flex flex-col min-h-0 relative">
+                    <div className="absolute top-2 left-2 z-10 flex items-center gap-2 bg-black/40 p-1 rounded border border-white/10 backdrop-blur">
+                      <button onClick={() => setTopTab('topology')} className={`px-2 py-1 text-xs rounded transition-colors ${topTab === 'topology' ? 'bg-cyan-500/20 text-cyan-400' : 'text-white/60 hover:text-white/90'}`}>3D Topology</button>
+                      <button onClick={() => setTopTab('timeline')} className={`px-2 py-1 text-xs rounded transition-colors ${topTab === 'timeline' ? 'bg-cyan-500/20 text-cyan-400' : 'text-white/60 hover:text-white/90'}`}>Timeline</button>
+                      
+                      {topTab === 'topology' && (
+                        <div className="flex items-center gap-1 pl-2 border-l border-white/10">
+                          <span className="text-[10px] text-slate-400 font-mono">Render:</span>
+                          <button 
+                            onClick={() => setTopologyActive(!topologyActive)}
+                            className={`px-1.5 py-0.5 text-[9px] rounded font-semibold transition-colors ${topologyActive ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}
+                          >
+                            {topologyActive ? 'ON' : 'OFF'}
+                          </button>
                         </div>
-                        {topTab === 'topology' ? (
-                          topologyActive ? (
-                            <Topology3D />
-                          ) : (
-                            <div className="h-full flex flex-col items-center justify-center bg-[#04060a]/20 border border-cyan-900/10 rounded font-mono text-xs text-slate-500">
-                              <span>3D Topology is paused to save memory & CPU</span>
-                              <button 
-                                onClick={() => setTopologyActive(true)}
-                                className="mt-2 px-3 py-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded text-[11px] font-semibold transition-all"
-                              >
-                                Resume Render ▶️
-                              </button>
-                            </div>
-                          )
-                        ) : (
-                          <TimelineView />
-                        )}
-                      </div>
-                    </Panel>
-                    
-                    <PanelResizeHandle className="h-1 bg-cyan-950/20 hover:bg-cyan-500/50 active:bg-cyan-400 transition-colors cursor-row-resize my-1 rounded" />
-                    
-                    {/* Bottom Half: Raw Packets or Conversations */}
-                    <Panel defaultSize={50} minSize={20}>
-                      <div className="h-full flex flex-col min-h-0 relative">
-                         <div className="absolute top-2 left-2 z-10 flex gap-1 bg-black/40 p-1 rounded border border-white/10 backdrop-blur">
-                          <button onClick={() => setBottomTab('packets')} className={`px-2 py-1 text-xs rounded transition-colors ${bottomTab === 'packets' ? 'bg-cyan-500/20 text-cyan-400' : 'text-white/60 hover:text-white/90'}`}>Raw Packets</button>
-                          <button onClick={() => setBottomTab('conversations')} className={`px-2 py-1 text-xs rounded transition-colors ${bottomTab === 'conversations' ? 'bg-cyan-500/20 text-cyan-400' : 'text-white/60 hover:text-white/90'}`}>Conversations</button>
+                      )}
+                    </div>
+                    {topTab === 'topology' ? (
+                      topologyActive ? (
+                        <Topology3D />
+                      ) : (
+                        <div className="h-full flex flex-col items-center justify-center bg-[#04060a]/20 border border-cyan-900/10 rounded font-mono text-xs text-slate-500">
+                          <span>3D Topology is paused to save memory & CPU</span>
+                          <button 
+                            onClick={() => setTopologyActive(true)}
+                            className="mt-2 px-3 py-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded text-[11px] font-semibold transition-all"
+                          >
+                            Resume Render ▶️
+                          </button>
                         </div>
-                        {bottomTab === 'packets' ? <PacketGrid apiKey={apiKey} /> : <ConversationsView />}
-                      </div>
-                    </Panel>
-                  </PanelGroup>
+                      )
+                    ) : (
+                      <TimelineView />
+                    )}
+                  </div>
                 </Panel>
                 
-                <PanelResizeHandle className="w-1 bg-cyan-950/20 hover:bg-cyan-500/50 active:bg-cyan-400 transition-colors cursor-col-resize mx-1.5 rounded" />
+                <PanelResizeHandle className="h-1 bg-cyan-950/20 hover:bg-cyan-500/50 active:bg-cyan-400 transition-colors cursor-row-resize my-1 rounded" />
                 
-                {/* Right Area: VoIP Analysis & Scrolling Alerts */}
-                <Panel defaultSize={35} minSize={20}>
-                  <div className="h-full flex flex-col min-h-0 overflow-hidden">
-                    <VoipDashboard />
+                {/* Bottom Half: Raw Packets or Conversations */}
+                <Panel defaultSize={50} minSize={20}>
+                  <div className="h-full flex flex-col min-h-0 relative">
+                     <div className="absolute top-2 left-2 z-10 flex gap-1 bg-black/40 p-1 rounded border border-white/10 backdrop-blur">
+                      <button onClick={() => setBottomTab('packets')} className={`px-2 py-1 text-xs rounded transition-colors ${bottomTab === 'packets' ? 'bg-cyan-500/20 text-cyan-400' : 'text-white/60 hover:text-white/90'}`}>Raw Packets</button>
+                      <button onClick={() => setBottomTab('conversations')} className={`px-2 py-1 text-xs rounded transition-colors ${bottomTab === 'conversations' ? 'bg-cyan-500/20 text-cyan-400' : 'text-white/60 hover:text-white/90'}`}>Conversations</button>
+                    </div>
+                    {bottomTab === 'packets' ? <PacketGrid apiKey={apiKey} /> : <ConversationsView />}
                   </div>
                 </Panel>
               </PanelGroup>
-            </div>
-          </>
-        ) : (
-          <McpDashboard />
-        )}
+            </Panel>
+            
+            <PanelResizeHandle className="w-1 bg-cyan-950/20 hover:bg-cyan-500/50 active:bg-cyan-400 transition-colors cursor-col-resize mx-1.5 rounded" />
+            
+            {/* Right Area: VoIP Analysis & Scrolling Alerts */}
+            <Panel defaultSize={35} minSize={20}>
+              <div className="h-full flex flex-col min-h-0 overflow-hidden">
+                <VoipDashboard />
+              </div>
+            </Panel>
+          </PanelGroup>
+        </div>
       </div>
     </div>
   )
