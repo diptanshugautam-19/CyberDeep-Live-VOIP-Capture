@@ -165,6 +165,36 @@ async def promote_capture(title: str = Query(...)):
         # Parse and analyze the promoted PCAP
         records = parse_evidence(dest_pcap)
         analysis = analyze_records(records)
+
+        # ---- Merge Live VoIP Tracking Data ----
+        # Enrich the offline analysis with live WebRTC tracking data if available
+        try:
+            from app.protocols.voip_manager import voip_manager
+            # Map of call_id to live metrics
+            for s in analysis.get("correlation", {}).get("voip_sessions", []):
+                cid = s.get("session_id")
+                if cid:
+                    # 1. ICE state & nominated pair
+                    s["ice_state"] = voip_manager._get_ice_state(cid)
+                    s["nominated_pair"] = voip_manager._get_nominated_pair(cid)
+                    # 2. TURN allocations
+                    s["turn_allocations"] = [
+                        {
+                            "relay": f"{a.relay_addr}:{a.relay_port}",
+                            "client": f"{a.client_addr}:{a.client_port}",
+                            "lifetime": a.lifetime,
+                            "channels": {
+                                str(ch): f"{peer[0]}:{peer[1]}"
+                                for ch, peer in a.channels.items()
+                            }
+                        }
+                        for a in voip_manager.turn_allocations.values()
+                    ]
+                    # 3. Extracted IPs
+                    s["extracted_ips"] = voip_manager.ip_store.get_by_category()
+        except Exception as merge_err:
+            logger.warning(f"Failed to merge live tracking data: {merge_err}")
+
         db_investigation_id = save_investigation(title, analysis)
         _cleanup_uploads(keep=10)
     except Exception as e:
@@ -335,51 +365,27 @@ async def websocket_capture_live(websocket: WebSocket, ticket: str = Query(...))
 
 # ── CyberDeep Dashboard (homepage) ──────────────────────────────────
 @app.get("/", response_class=HTMLResponse)
-async def cyberdeep_dashboard():
+async def cyberdeep_dashboard(request: Request):
     """Serve the CyberDeep dashboard as the homepage."""
-    return FileResponse(BASE_DIR / "index.html", media_type="text/html")
-
-
-# ── Original IP Intel standalone page ───────────────────────────────
-@app.get("/tool", response_class=HTMLResponse)
-async def ip_intel_tool(request: Request):
-    """Serve the original IP Intel tool interface."""
+    from app.core.auth import STATIC_API_KEY
     return templates.TemplateResponse(
-        "index.html",
-        {"request": request, "app_name": APP_NAME, "api_base_url": ""},
+        "unified.html",
+        {"request": request, "app_name": APP_NAME, "api_base_url": "", "api_key": STATIC_API_KEY},
     )
+
+
+
+# ── Legacy IP Intel redirects ───────────────────────────────────────
+@app.get("/tool", response_class=HTMLResponse)
+async def ip_intel_tool():
+    """Redirect legacy standalone tool to the main unified dashboard."""
+    return RedirectResponse(url="/")
 
 @app.get("/tool/live", response_class=HTMLResponse)
 async def live_capture_tool():
-    """Serve the VoIP WireStream live capture interface with cache-busting and no-cache headers."""
-    html_path = BASE_DIR / "dist" / "src" / "live" / "index.html"
-    if not html_path.exists():
-        raise HTTPException(status_code=404, detail="Frontend assets not compiled. Run npm run build first.")
-    
-    with open(html_path, "r", encoding="utf-8") as f:
-        content = f.read()
-        
-    # Dynamically inject cache busters to the bundle URLs
-    import time
-    import re
-    timestamp = int(time.time())
-    content = re.sub(
-        r'src="/dist/assets/(live-[a-zA-Z0-9_\-]+)\.js"',
-        rf'src="/dist/assets/\1.js?v={timestamp}"',
-        content
-    )
-    content = re.sub(
-        r'href="/dist/assets/(live-[a-zA-Z0-9_\-]+)\.css"',
-        rf'href="/dist/assets/\1.css?v={timestamp}"',
-        content
-    )
-    
-    headers = {
-        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-        "Pragma": "no-cache",
-        "Expires": "0"
-    }
-    return HTMLResponse(content=content, status_code=200, headers=headers)
+    """Redirect live capture page to the main dashboard unified.html at /."""
+    return RedirectResponse(url="/")
+
 
 
 @app.post("/api/upload")
@@ -1021,7 +1027,7 @@ async def subdomain_engines():
 # ── TShark MCP Integration APIs ────────────────────────────────────
 import shutil
 from app.integrations.tshark_mcp.service import tshark_mcp_service
-from app.analysis.ai_investigator import AIInvestigator
+
 
 def _get_session_or_404(session_id: str) -> dict:
     rows = router.execute("investigations", "SELECT case_json FROM investigations WHERE id = ?", (session_id,))
@@ -1056,14 +1062,6 @@ async def mcp_status():
         "tshark_available": tshark_exists
     }
 
-@app.post("/api/mcp/chat")
-async def mcp_chat(req: dict):
-    session_id = req.get("session_id")
-    message = req.get("message")
-    if not session_id or not message:
-        raise HTTPException(status_code=400, detail="session_id and message are required.")
-    res = await AIInvestigator.chat_investigate(session_id, message)
-    return res
 
 @app.get("/api/mcp/sip")
 async def mcp_sip(session_id: str):
@@ -1124,10 +1122,6 @@ async def mcp_protocols(session_id: str):
 # Serve data/ directory (police_stations_master.csv, etc.)
 app.mount("/data", StaticFiles(directory=BASE_DIR / "data"), name="data")
 
-# Serve police_station_finder/ directory
-_police_dir = BASE_DIR / "police_station_finder"
-if _police_dir.is_dir():
-    app.mount("/police_station_finder", StaticFiles(directory=_police_dir), name="police_station_finder")
 
 # Serve docs/ directory
 _docs_dir = BASE_DIR / "docs"

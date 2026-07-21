@@ -1481,7 +1481,13 @@ def _classify_call(session: dict, rows_by_ip: dict[str, dict]) -> tuple[str, int
     notes = []
     confidence = 70
 
+    server_ip = session.get("server_ip", "")
+    telemetry = rows_by_ip.get(server_ip) if server_ip else None
+
     if "TURN" in service or any(port in {3478, 3479, 3480, 3481, 5349} for port in ports):
+        if server_ip and not _is_relay_server(server_ip, telemetry):
+            notes.append("STUN/TURN usage observed to peer IP (no server relay)")
+            return "Peer-to-Peer", 90, notes
         notes.append("TURN or relay signaling observed")
         return "Server Relayed", 99, notes
 

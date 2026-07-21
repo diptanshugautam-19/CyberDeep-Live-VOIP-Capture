@@ -45,24 +45,12 @@ def build_call_attribution(session: VoipSession, stun_packets: list[dict], rtp_p
     # Load classification engine
     classifier = ClassificationEngine(Path("registry/interfaces"))
     session_endpoints = []
-    excluded_ips = set()
+    excluded_ips = set() # Always empty - never exclude any IP address per user requirement
     
     for ip in sorted(all_ips):
         role, confidence, matched_sig, paired_addr, evidence = classifier.classify(ip, all_records, filename=session.call_id or "")
         tier = ROLE_TIERS[role]
-        
         excluded_from = []
-        if tier == 1 or role == EndpointRole.UNKNOWN:
-            excluded_ips.add(ip)
-            excluded_from = [
-                "participant_count",
-                "public_ip_detection",
-                "geolocation",
-                "threat_intelligence",
-                "asn_lookup",
-                "organization_lookup",
-                "isp_lookup"
-            ]
             
         endpoint_id = f"ep_{uuid.uuid4().hex[:6]}"
         now_str = datetime.datetime.now(datetime.timezone.utc).isoformat()

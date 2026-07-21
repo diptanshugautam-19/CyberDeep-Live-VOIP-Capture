@@ -113,6 +113,62 @@ def is_tls_packet(payload: bytes) -> bool:
     return payload[2] in (0x00, 0x01, 0x02, 0x03, 0x04)
 
 
+def is_websocket_packet(payload: bytes) -> bool:
+    """
+    Check for a WebSocket binary or text frame header (RFC 6455).
+    FIN bit set, opcode in {0x00 continuation, 0x01 text, 0x02 binary}.
+    Also matches HTTP Upgrade handshake (GET / HTTP/1.1 Upgrade: websocket).
+    Mirrors ProductionWebRTCCaptureEngine._detect_tcp_framing() WebSocket branch.
+    """
+    if len(payload) < 2:
+        return False
+    if payload.startswith((b'GET ', b'HTTP/')):
+        return True
+    first = payload[0]
+    # FIN bit (0x80) set and opcode is continuation/text/binary
+    return bool(first & 0x80) and (first & 0x0F) in (0x00, 0x01, 0x02, 0x08, 0x09, 0x0A)
+
+
+def _unwrap_websocket_text_frame(payload: bytes) -> bytes:
+    """
+    Attempt to extract the first text-frame payload from a WebSocket stream.
+    Returns the inner bytes (unmasked), or the original payload if not a WS text frame.
+    """
+    if len(payload) < 2:
+        return payload
+    b1, b2 = payload[0], payload[1]
+    opcode = b1 & 0x0F
+    if opcode != 0x01:  # Only text frames carry SIP/SDP
+        return b''
+    masked = b2 & 0x80
+    raw_len = b2 & 0x7F
+    header_len = 2
+    if raw_len == 126:
+        if len(payload) < 4:
+            return b''
+        data_len = struct.unpack('!H', payload[2:4])[0]
+        header_len = 4
+    elif raw_len == 127:
+        if len(payload) < 10:
+            return b''
+        data_len = struct.unpack('!Q', payload[2:10])[0]
+        header_len = 10
+    else:
+        data_len = raw_len
+    mask_key = None
+    if masked:
+        if len(payload) < header_len + 4:
+            return b''
+        mask_key = payload[header_len:header_len + 4]
+        header_len += 4
+    if len(payload) < header_len + data_len:
+        return b''
+    frame_data = payload[header_len:header_len + data_len]
+    if mask_key:
+        frame_data = bytes(b ^ mask_key[i % 4] for i, b in enumerate(frame_data))
+    return frame_data
+
+
 # ---- Packet Parser ----
 
 def parse_packet_meta(pkt_meta: dict) -> dict:
@@ -211,6 +267,12 @@ def parse_packet_meta(pkt_meta: dict) -> dict:
         elif payload and is_rtp_tcp_packet(payload):
             length = struct.unpack_from(">H", payload, 0)[0]
             payload = payload[2:2+length]
+        elif payload and is_websocket_packet(payload):
+            # Unwrap WebSocket text frame to expose SIP/SDP payload
+            ws_inner = _unwrap_websocket_text_frame(payload)
+            if ws_inner:
+                payload = ws_inner
+            parsed["payload_kind"] = "websocket"
             
         parsed["payload"] = payload
         if payload:
@@ -268,6 +330,10 @@ def parse_packet_meta(pkt_meta: dict) -> dict:
                 pass
     elif payload and is_tls_packet(payload):
         parsed["protocol"] = "TLS"
+    elif payload and is_websocket_packet(payload):
+        # WebSocket carrying SIP/SDP or STUN — mark for voip_manager TCP analysis
+        parsed["protocol"] = "TCP"
+        parsed["payload_kind"] = "websocket"
 
     return parsed
 

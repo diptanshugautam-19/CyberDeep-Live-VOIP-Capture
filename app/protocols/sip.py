@@ -277,3 +277,159 @@ def _parse_sdp_candidate(line: str) -> dict | None:
         return candidate
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Advanced address parser  (from ProductionWebRTCCaptureEngine._parse_addr_advanced)
+# ---------------------------------------------------------------------------
+
+def _parse_addr_advanced(addr: str):
+    """
+    Parse IPv4:port, [IPv6]:port, bare IPv6, or hostname:port from a SIP
+    Via / Contact / SDP address field.
+
+    Returns (ip, port) — port may be None.
+    Mirrors ProductionWebRTCCaptureEngine._parse_addr_advanced() exactly.
+    """
+    addr = addr.strip()
+
+    # Bracketed IPv6: [2001:db8::1]:5060
+    if addr.startswith('['):
+        end = addr.find(']')
+        if end != -1:
+            ip = addr[1:end]
+            port_part = addr[end + 1:]
+            if port_part.startswith(':'):
+                try:
+                    return ip, int(port_part[1:])
+                except ValueError:
+                    return ip, None
+            return ip, None
+
+    # Bare IPv6 (more than two colons, no brackets)
+    if addr.count(':') > 2:
+        if ']:' in addr:
+            parts = addr.rsplit(':', 1)
+            return parts[0].strip('[]'), int(parts[1])
+        return addr, None
+
+    # IPv4:port or hostname:port
+    if ':' in addr:
+        parts = addr.rsplit(':', 1)
+        try:
+            return parts[0], int(parts[1])
+        except ValueError:
+            return addr, None
+
+    return addr, None
+
+
+# ---------------------------------------------------------------------------
+# IP extraction helper for voip_manager integration
+# (mirrors parse_sip_message() source-tagging from ProductionWebRTCCaptureEngine)
+# ---------------------------------------------------------------------------
+
+def parse_sip_ips(payload_bytes: bytes) -> list[dict]:
+    """
+    Parse a SIP/SDP message and return every extractable IP with its source tag,
+    port, confidence, and context — ready for ip_store.add_ip().
+
+    Sources match ProductionWebRTCCaptureEngine category mappings:
+      sip_via, sip_contact, sdp_c_line, sdp_origin,
+      ice_candidate_host, ice_candidate_srflx, ice_candidate_relay, ice_candidate_prflx
+
+    Returns a list of dicts:
+      {source, ip, port, ip_version, confidence, context, ice_ufrag}
+    """
+    import re
+    try:
+        text = payload_bytes.decode('utf-8', errors='ignore')
+    except Exception:
+        return []
+
+    results = []
+    ice_ufrag = None
+
+    ufrag_m = re.search(r'a=ice-ufrag:([^\s\r\n]+)', text, re.IGNORECASE)
+    if ufrag_m:
+        ice_ufrag = ufrag_m.group(1)
+
+    # --- SIP Via ---
+    for m in re.finditer(
+        r'Via:\s*SIP/2\.0/(?:UDP|TCP|TLS|WS|WSS)\s+([^;:>\r\n]+)',
+        text, re.IGNORECASE
+    ):
+        ip, port = _parse_addr_advanced(m.group(1).strip())
+        if ip:
+            results.append({
+                'source': 'sip_via', 'ip': ip, 'port': port,
+                'ip_version': 6 if ':' in ip else 4,
+                'confidence': 'medium',
+                'context': f"Via: {m.group(1).strip()}",
+                'ice_ufrag': ice_ufrag,
+            })
+
+    # --- SIP Contact ---
+    for m in re.finditer(
+        r'Contact:[^\n]*(?:<)?sip:[^@]*@([^\s>;]+)',
+        text, re.IGNORECASE
+    ):
+        ip, port = _parse_addr_advanced(m.group(1).strip())
+        if ip:
+            results.append({
+                'source': 'sip_contact', 'ip': ip, 'port': port,
+                'ip_version': 6 if ':' in ip else 4,
+                'confidence': 'medium',
+                'context': f"Contact: {m.group(0)}",
+                'ice_ufrag': ice_ufrag,
+            })
+
+    # --- SDP c= line ---
+    for m in re.finditer(r'c=\s*IN\s+(IP4|IP6)\s+([^\s\r\n]+)', text, re.IGNORECASE):
+        ip = m.group(2).strip()
+        if ip not in ('0.0.0.0', '::', '0:0:0:0:0:0:0:0', '::0'):
+            results.append({
+                'source': 'sdp_c_line', 'ip': ip, 'port': None,
+                'ip_version': 6 if m.group(1).upper() == 'IP6' else 4,
+                'confidence': 'low',
+                'context': f"c=IN {m.group(1)} {ip}",
+                'ice_ufrag': ice_ufrag,
+            })
+
+    # --- SDP o= line ---
+    for m in re.finditer(
+        r'o=[^\s]+\s+\d+\s+\d+\s+IN\s+(IP4|IP6)\s+([^\s\r\n]+)',
+        text, re.IGNORECASE
+    ):
+        results.append({
+            'source': 'sdp_origin', 'ip': m.group(2).strip(), 'port': None,
+            'ip_version': 6 if m.group(1).upper() == 'IP6' else 4,
+            'confidence': 'low',
+            'context': f"o=...IN {m.group(1)} {m.group(2).strip()}",
+            'ice_ufrag': ice_ufrag,
+        })
+
+    # --- ICE candidates ---
+    candidate_re = (
+        r'a=candidate:([^\s]+)\s+(\d+)\s+([^\s]+)\s+(\d+)\s+'
+        r'([^\s]+)\s+(\d+)\s+typ\s+([^\s]+)'
+        r'(?:\s+raddr\s+([^\s]+))?(?:\s+rport\s+(\d+))?'
+    )
+    confidence_map = {'srflx': 'high', 'prflx': 'high', 'host': 'medium', 'relay': 'low'}
+    for m in re.finditer(candidate_re, text, re.IGNORECASE):
+        ctype = m.group(7).lower()
+        ip = m.group(5)
+        port = int(m.group(6))
+        transport = m.group(3).upper()
+        foundation = m.group(1)
+        results.append({
+            'source': f'ice_candidate_{ctype}',
+            'ip': ip,
+            'port': port,
+            'ip_version': 6 if ':' in ip else 4,
+            'confidence': confidence_map.get(ctype, 'low'),
+            'context': f"a=candidate:{foundation}...typ {ctype} [{transport}]",
+            'ice_ufrag': ice_ufrag,
+        })
+
+    return results

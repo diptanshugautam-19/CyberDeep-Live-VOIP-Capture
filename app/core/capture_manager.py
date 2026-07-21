@@ -33,19 +33,34 @@ class LiveCaptureManager:
         self.temp_pcap_path = None
         self.is_capturing = False
         self.is_paused = False
-        
+
+        # --- capture_live() upgrades ---
+        # filter_private: mirrors ProductionWebRTCCaptureEngine(filter_private=False)
+        # When True, private/loopback/link-local IPs are excluded from ip_store extraction.
+        self.filter_private: bool = False
+
+        # Optional hard stop after N packets (0 = unlimited), mirrors capture_live(count=0)
+        self.count_limit: int = 0
+
+        # Optional timeout in seconds (None = unlimited), mirrors capture_live(timeout=None)
+        self.capture_timeout: int | None = None
+
+        # Cached final report produced by generate_report() on stop
+        self._last_report: dict | None = None
+        # ---
+
         # Display Ring Buffer capped at 256MB
         self.display_ring_buffer = collections.deque()
         self.ring_buffer_bytes = 0
         self.max_memory_bytes = 256 * 1024 * 1024  # 256MB
-        
+
         # Telemetry metrics
         self.packet_count = 0
         self.dropped_packets = 0
         self.start_time = 0
         self.bytes_captured = 0
         self.last_stats_write = 0
-        
+
         # Register atexit and signal handlers
         atexit.register(self.shutdown)
         try:
@@ -59,6 +74,10 @@ class LiveCaptureManager:
         interfaces = []
         try:
             from scapy.all import conf
+            try:
+                conf.ifaces.reload()
+            except Exception as reload_err:
+                logger.error(f"Error reloading Scapy interfaces: {reload_err}")
             # Loop through all resolved interfaces
             for iface_name, iface in conf.ifaces.items():
                 desc = iface.description or iface.name
@@ -94,22 +113,55 @@ class LiveCaptureManager:
             logger.error(f"BPF filter compilation failed: {e}")
             return False
 
-    def start_capture(self, interface: str, bpf_filter: str = "") -> str:
-        """Start capturing packets in the background."""
+    def start_capture(
+        self,
+        interface: str,
+        bpf_filter: str = "",
+        filter_private: bool = False,
+        count_limit: int = 0,
+        capture_timeout: int | None = None,
+    ) -> str:
+        """
+        Start capturing packets in the background.
+
+        Args:
+            interface:       Network interface name, or 'simulated'.
+            bpf_filter:      BPF filter expression (empty = VoIP-focused default).
+            filter_private:  When True, private/loopback/link-local IPs are excluded
+                             from the ip_store extraction report — mirrors
+                             ProductionWebRTCCaptureEngine(filter_private=...) param.
+            count_limit:     Stop automatically after this many packets (0 = unlimited),
+                             mirrors capture_live(count=N).
+            capture_timeout: Stop automatically after this many seconds (None = unlimited),
+                             mirrors capture_live(timeout=N).
+        """
         if self.is_capturing:
             raise ValueError("Capture already in progress")
-            
+
         if not bpf_filter:
             bpf_filter = "udp or (tcp and (port 5060 or port 5061 or port 443 or port 53 or port 5353 or port 3478))"
-            
+
         if bpf_filter and not self.validate_filter(bpf_filter):
             raise ValueError(f"Malformed BPF filter expression: {bpf_filter}")
-            
+
+        # Store capture_live() options
+        self.filter_private = filter_private
+        self.count_limit = count_limit
+        self.capture_timeout = capture_timeout
+        self._last_report = None
+
+        # Apply filter_private to ip_store so extraction respects the flag
+        try:
+            from app.protocols.voip_manager import voip_manager
+            voip_manager.ip_store.filter_private = filter_private
+        except Exception:
+            pass
+
         self.session_id = f"live_{int(time.time())}"
         self.interface = interface
         self.bpf_filter = bpf_filter
         self.temp_pcap_path = TEMP_PCAP_DIR / f"cyberdeep_{self.session_id}.pcap"
-        
+
         # Reset ring buffer and metrics
         self.display_ring_buffer.clear()
         self.ring_buffer_bytes = 0
@@ -117,7 +169,15 @@ class LiveCaptureManager:
         self.dropped_packets = 0
         self.bytes_captured = 0
         self.start_time = time.time()
-        
+
+        # Startup banner — mirrors capture_live() print block
+        logger.info("[*] Production capture engine starting...")
+        logger.info(f"[*] Interface       : {interface}")
+        logger.info(f"[*] BPF Filter      : {bpf_filter}")
+        logger.info(f"[*] Private IP filter: {'ON' if filter_private else 'OFF'}")
+        logger.info(f"[*] Packet limit    : {count_limit if count_limit else 'unlimited'}")
+        logger.info(f"[*] Timeout         : {capture_timeout if capture_timeout else 'unlimited'}s")
+
         # Open PCAP writer
         try:
             self.pcap_writer = PcapWriter(str(self.temp_pcap_path), append=True, sync=True)
@@ -143,17 +203,23 @@ class LiveCaptureManager:
             logger.info(f"Simulated capture session {self.session_id} started.")
             return self.session_id
 
-        # Start Scapy sniffer in background thread
+        # Start Scapy sniffer with count and timeout support
         try:
             self.sniffer = AsyncSniffer(
                 iface=self.interface if self.interface != "any" else None,
                 filter=self.bpf_filter or None,
                 prn=self.packet_callback,
+                count=self.count_limit or 0,           # 0 = unlimited (mirrors capture_live count=)
+                timeout=self.capture_timeout or None,  # None = unlimited (mirrors capture_live timeout=)
                 store=0,
                 promisc=False  # Disabled promiscuous mode for Windows Wi-Fi compatibility
             )
             self.sniffer.start()
-            logger.info(f"Capture session {self.session_id} started on interface {self.interface} with BPF '{self.bpf_filter}'")
+            logger.info(
+                f"Capture session {self.session_id} started on interface {self.interface} "
+                f"with BPF '{self.bpf_filter}' "
+                f"[count={count_limit or 'unlimited'}, timeout={capture_timeout or 'unlimited'}s]"
+            )
             return self.session_id
         except Exception as e:
             self.is_capturing = False
@@ -176,13 +242,13 @@ class LiveCaptureManager:
         logger.info(f"Capture session {self.session_id} resumed")
 
     def stop_capture(self) -> str:
-        """Stop capture session, close PCAP writer and finalize headers."""
+        """Stop capture session, close PCAP writer, generate final report."""
         if not self.is_capturing:
             return ""
-            
+
         self.is_capturing = False
         session_id = self.session_id
-        
+
         if hasattr(self, "simulation_task") and self.simulation_task:
             try:
                 self.simulation_task.cancel()
@@ -195,14 +261,19 @@ class LiveCaptureManager:
                 self.sniffer.stop()
             except Exception as e:
                 logger.error(f"Error stopping AsyncSniffer: {e}")
-                
+
         if self.pcap_writer:
             try:
                 self.pcap_writer.close()
             except Exception as e:
                 logger.error(f"Error closing PCAP writer: {e}")
-                
+
         logger.info(f"Capture session {session_id} stopped. Saved rolling pcap to {self.temp_pcap_path}")
+
+        # --- print_report() equivalent: generate + cache + broadcast final report ---
+        self._last_report = self.generate_report()
+        self._broadcast_report(self._last_report)
+
         return session_id
 
     def get_status(self) -> dict:
@@ -210,13 +281,16 @@ class LiveCaptureManager:
         elapsed = time.time() - self.start_time if self.start_time > 0 else 0
         pps = self.packet_count / elapsed if elapsed > 0 else 0
         bps = self.bytes_captured / elapsed if elapsed > 0 else 0
-        
+
         return {
             "session_id": self.session_id,
             "interface": self.interface,
             "bpf_filter": self.bpf_filter,
             "is_capturing": self.is_capturing,
             "is_paused": self.is_paused,
+            "filter_private": self.filter_private,
+            "count_limit": self.count_limit,
+            "capture_timeout": self.capture_timeout,
             "packet_count": self.packet_count,
             "dropped_packets": self.dropped_packets,
             "bytes_captured": self.bytes_captured,
@@ -347,6 +421,177 @@ class LiveCaptureManager:
             self.stop_capture()
             # Flush any pending bridge queue tasks
             packet_bridge.stop()
+
+    # =========================================================================
+    # Report generation — mirrors print_report() from ProductionWebRTCCaptureEngine v3
+    # =========================================================================
+
+    def generate_report(self) -> dict:
+        """
+        Build a structured final capture report equivalent to print_report().
+
+        Pulls data from voip_manager.ip_store (categorised IPs),
+        voip_manager.turn_allocations, and voip_manager.ice_state_machines.
+
+        Returns a dict that mirrors the print_report() output sections:
+          - capture_results   : {SIP Via, Contact, SDP IP, SRFLX, RTP} first-seen IPs
+          - turn_allocations  : relay/client/lifetime/channels per allocation
+          - ice_sessions      : ufrag -> {state, nominated} per ICE session
+          - extracted_ips     : full de-duplicated list with confidence/source
+          - total_ips         : total extraction count
+          - session_stats     : packet_count, dropped, elapsed, bytes
+        """
+        try:
+            from app.protocols.voip_manager import voip_manager
+        except Exception:
+            voip_manager = None
+
+        elapsed = time.time() - self.start_time if self.start_time > 0 else 0
+
+        # --- Section 1: Categorised IP results (mirrors "--- CAPTURE RESULTS ---") ---
+        capture_results = {
+            "SIP Via": "N/A",
+            "Contact": "N/A",
+            "SDP IP": "N/A",
+            "SRFLX": "N/A",
+            "RTP": "N/A",
+        }
+        extracted_ips_list = []
+        total_ips = 0
+
+        if voip_manager:
+            categories = voip_manager.ip_store.get_by_category()
+            for label in capture_results:
+                if label in categories and categories[label]:
+                    capture_results[label] = categories[label]
+
+            extracted_ips_list = [
+                {
+                    "source": e.source,
+                    "ip": e.ip,
+                    "port": e.port,
+                    "ip_version": e.ip_version,
+                    "confidence": e.confidence,
+                    "session_id": e.session_id,
+                    "is_nominated": e.is_nominated,
+                    "context": e.context,
+                    "timestamp": e.timestamp,
+                }
+                for e in voip_manager.ip_store.extracted_ips
+            ]
+            total_ips = len(voip_manager.ip_store.extracted_ips)
+
+        # --- Section 2: TURN allocations (mirrors "[TURN ALLOCATIONS]") ---
+        turn_allocations = []
+        if voip_manager:
+            for key, alloc in voip_manager.turn_allocations.items():
+                turn_allocations.append({
+                    "relay": key,
+                    "client_addr": alloc.client_addr,
+                    "client_port": alloc.client_port,
+                    "lifetime": alloc.lifetime,
+                    "realm": alloc.realm,
+                    "channel_count": len(alloc.channels),
+                    "channels": {
+                        str(ch): f"{peer[0]}:{peer[1]}"
+                        for ch, peer in alloc.channels.items()
+                    },
+                })
+
+        # --- Section 3: ICE sessions (mirrors "[ICE Sessions: N]") ---
+        ice_sessions = []
+        if voip_manager:
+            for ufrag, machine in voip_manager.ice_state_machines.items():
+                pair = machine.nominated_pair
+                ice_sessions.append({
+                    "ufrag": ufrag,
+                    "state": machine.ice_state.name,
+                    "nominated": machine.nomination_confirmed,
+                    "nominated_pair": {
+                        "local_ip": pair.local_candidate.ip,
+                        "local_port": pair.local_candidate.port,
+                        "remote_ip": pair.remote_candidate.ip,
+                        "remote_port": pair.remote_candidate.port,
+                    } if pair else None,
+                    "checks_total": len(machine.checks),
+                    "is_controlling": machine.is_controlling,
+                })
+
+        # --- Section 4: Session stats ---
+        report = {
+            "session_id": self.session_id,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "filter_private": self.filter_private,
+            "capture_results": capture_results,
+            "turn_allocations": turn_allocations,
+            "ice_sessions": ice_sessions,
+            "extracted_ips": extracted_ips_list,
+            "total_ips": total_ips,
+            "session_stats": {
+                "packet_count": self.packet_count,
+                "dropped_packets": self.dropped_packets,
+                "bytes_captured": self.bytes_captured,
+                "elapsed_seconds": round(elapsed, 2),
+            },
+        }
+
+        # Log summary to console/logger — mirrors print_report() print block
+        logger.info("=" * 60)
+        logger.info("PRODUCTION WEBRTC CAPTURE REPORT")
+        logger.info("=" * 60)
+        logger.info("--- CAPTURE RESULTS ---")
+        for label, ip in capture_results.items():
+            logger.info(f"  {label:12s}: {ip}")
+        logger.info("-" * 22)
+        if turn_allocations:
+            logger.info(f"[TURN ALLOCATIONS: {len(turn_allocations)}]")
+            for a in turn_allocations:
+                logger.info(f"  Relay : {a['relay']}")
+                logger.info(f"    Client  : {a['client_addr']}:{a['client_port']}")
+                logger.info(f"    Channels: {a['channel_count']}")
+                for ch, peer in a['channels'].items():
+                    logger.info(f"      ch{ch} -> {peer}")
+        logger.info(f"[ICE Sessions: {len(ice_sessions)}]")
+        for sess in ice_sessions:
+            nominated = "YES" if sess["nominated"] else "NO"
+            logger.info(f"  {sess['ufrag']}: {sess['state']}, nominated={nominated}")
+        logger.info(f"[Total IPs extracted: {total_ips}]")
+
+        return report
+
+    def get_report(self) -> dict | None:
+        """
+        Return the last generated report (produced on stop_capture()).
+        If capture is still running, generates a live snapshot report.
+        """
+        if self.is_capturing:
+            # Live snapshot during capture
+            return self.generate_report()
+        return self._last_report
+
+    def _broadcast_report(self, report: dict):
+        """
+        Broadcast the final capture report over WebSocket.
+        This is the async equivalent of print_report() — pushes structured
+        data to the frontend instead of printing to stdout.
+        """
+        try:
+            import asyncio
+            from app.core.bridge import broadcast_manager
+
+            async def _do_broadcast():
+                await broadcast_manager.broadcast({
+                    "type": "capture_report",
+                    "report": report
+                }, priority=1)
+
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(_do_broadcast())
+            except RuntimeError:
+                asyncio.run(_do_broadcast())
+        except Exception as e:
+            logger.error(f"Failed to broadcast capture report: {e}")
 
     async def run_simulation(self):
         """Asynchronously generates realistic testing traffic packets to push into event bridge."""

@@ -48,6 +48,8 @@ ATTRIBUTES = {
     0x8028: "FINGERPRINT",
     0x8029: "ICE-CONTROLLED",
     0x802a: "ICE-CONTROLLING",
+    0x802b: "RESPONSE-ORIGIN",
+    0x802c: "OTHER-ADDRESS",
 }
 
 
@@ -233,3 +235,51 @@ def parse_stun_packet(payload_bytes: bytes) -> dict | None:
         pass
 
     return fields
+
+
+# ---------------------------------------------------------------------------
+# ICE-specific STUN binding parser
+# (from ProductionWebRTCCaptureEngine.parse_stun_binding)
+# ---------------------------------------------------------------------------
+
+def parse_stun_binding_for_ice(payload_bytes: bytes) -> dict | None:
+    """
+    Parse a STUN Binding Request or Response and extract the ICE-critical fields
+    needed by the IceStateMachine:
+
+      - is_request: bool (True = Binding Request, False = Success Response)
+      - use_candidate: bool (presence of USE-CANDIDATE attribute, RFC 8445 §7.1.1)
+      - priority: int | None (from PRIORITY attribute — identifies local candidate)
+      - ufrag: str | None  (from USERNAME, first part before ':')
+      - xor_mapped: {"ip": str, "port": int} | None (decoded XOR-MAPPED-ADDRESS)
+      - is_controlling: bool  (ICE-CONTROLLING attribute present)
+      - is_controlled: bool   (ICE-CONTROLLED attribute present)
+      - transaction_id: str   (hex)
+
+    Returns None if payload is not a valid STUN Binding message.
+    """
+    fields = parse_stun_packet(payload_bytes)
+    if not fields:
+        return None
+
+    # Only care about Binding messages
+    msg_name = fields.get("message_name", "")
+    if "Binding" not in msg_name:
+        return None
+
+    is_request = "Request" in msg_name
+
+    # Derive ufrag from USERNAME (format: "remote_ufrag:local_ufrag")
+    username = fields.get("username", "")
+    ufrag = fields.get("remote_ufrag") or (username.split(":")[0] if ":" in username else username[:8]) or None
+
+    return {
+        "is_request":      is_request,
+        "use_candidate":   fields.get("use_candidate", False),
+        "priority":        fields.get("priority"),
+        "ufrag":           ufrag,
+        "xor_mapped":      fields.get("xor_mapped_address"),
+        "is_controlling":  "ice_controlling" in fields,
+        "is_controlled":   "ice_controlled" in fields,
+        "transaction_id":  fields.get("transaction_id", ""),
+    }
