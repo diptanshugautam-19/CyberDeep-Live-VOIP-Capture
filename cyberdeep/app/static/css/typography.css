@@ -1,0 +1,121 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap");
+
+:root {
+  --font-primary: "Inter";
+  --font-sans: var(--font-primary);
+  --font-mono: var(--font-primary);
+
+  --type-page-size: 32px;
+  --type-section-size: 24px;
+  --type-card-size: 18px;
+  --type-body-size: 14px;
+  --type-small-size: 12px;
+
+  --type-regular: 400;
+  --type-medium: 500;
+  --type-semibold: 600;
+
+  --type-page-line-height: 1.2;
+  --type-section-line-height: 1.3;
+  --type-card-line-height: 1.4;
+  --type-body-line-height: 1.5;
+  --type-small-line-height: 1.4;
+  --type-letter-spacing: 0;
+}
+
+html,
+body,
+body *,
+body *::before,
+body *::after {
+  font-family: var(--font-primary) !important;
+  letter-spacing: var(--type-letter-spacing) !important;
+}
+
+body {
+  font-size: var(--type-body-size);
+  font-weight: var(--type-regular);
+  line-height: var(--type-body-line-height);
+}
+
+button,
+input,
+select,
+textarea {
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+}
+
+.font-sans,
+.font-mono {
+  font-family: var(--font-primary) !important;
+}
+
+.type-page-title {
+  font-size: var(--type-page-size) !important;
+  font-weight: var(--type-semibold) !important;
+  line-height: var(--type-page-line-height) !important;
+}
+
+.type-section-title {
+  font-size: var(--type-section-size) !important;
+  font-weight: var(--type-semibold) !important;
+  line-height: var(--type-section-line-height) !important;
+}
+
+.type-card-title {
+  font-size: var(--type-card-size) !important;
+  font-weight: var(--type-medium) !important;
+  line-height: var(--type-card-line-height) !important;
+}
+
+.type-body {
+  font-size: var(--type-body-size) !important;
+  font-weight: var(--type-regular) !important;
+  line-height: var(--type-body-line-height) !important;
+}
+
+.type-small,
+.text-xs,
+[class~="text-[9px]"],
+[class~="text-[10px]"],
+[class~="text-[11px]"],
+[class~="text-[12px]"] {
+  font-size: var(--type-small-size) !important;
+  font-weight: var(--type-regular) !important;
+  line-height: var(--type-small-line-height) !important;
+}
+
+.text-sm,
+.text-base,
+.text-md,
+[class~="text-[13px]"],
+[class~="text-[14px]"],
+[class~="text-[15px]"],
+[class~="text-[16px]"] {
+  font-size: var(--type-body-size) !important;
+  font-weight: var(--type-regular) !important;
+  line-height: var(--type-body-line-height) !important;
+}
+
+.text-lg,
+[class~="text-[17px]"],
+[class~="text-[18px]"] {
+  font-size: var(--type-card-size) !important;
+  font-weight: var(--type-medium) !important;
+  line-height: var(--type-card-line-height) !important;
+}
+
+.text-xl {
+  font-size: var(--type-section-size) !important;
+  font-weight: var(--type-semibold) !important;
+  line-height: var(--type-section-line-height) !important;
+}
+
+.text-2xl,
+.text-3xl {
+  font-size: var(--type-page-size) !important;
+  font-weight: var(--type-semibold) !important;
+  line-height: var(--type-page-line-height) !important;
+}

@@ -1,0 +1,2113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta id="bootstrap-api-key" content="{{ api_key }}">
+<title>DeepLive VOIP Capture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+:root{--bg-primary:#0a0e1a;--bg-secondary:#0f1525;--bg-tertiary:#141b2d;--bg-card:#111827;--border-color:#1e293b;--border-hover:#334155;--text-primary:#e2e8f0;--text-secondary:#94a3b8;--text-muted:#64748b;--accent-cyan:#06b6d4;--accent-cyan-glow:rgba(6,182,212,0.3);--accent-green:#10b981;--accent-green-glow:rgba(16,185,129,0.3);--accent-yellow:#f59e0b;--accent-red:#ef4444;--accent-purple:#8b5cf6;--font-mono:'JetBrains Mono',monospace;--font-sans:'Inter',sans-serif}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body,#root{height:100%;background:var(--bg-primary);color:var(--text-primary);font-family:var(--font-sans);overflow:hidden}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:var(--bg-secondary)}
+::-webkit-scrollbar-thumb{background:var(--border-color);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--border-hover)}
+@keyframes pulse-glow{0%,100%{box-shadow:0 0 5px var(--accent-cyan-glow)}50%{box-shadow:0 0 20px var(--accent-cyan-glow),0 0 40px var(--accent-cyan-glow)}}
+@keyframes pulse-green{0%,100%{box-shadow:0 0 5px var(--accent-green-glow)}50%{box-shadow:0 0 20px var(--accent-green-glow),0 0 40px var(--accent-green-glow)}}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+@keyframes slide-in{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
+@keyframes marker-pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.5);opacity:0.5}}
+@keyframes progress-shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+.cyber-grid{background-image:linear-gradient(rgba(6,182,212,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(6,182,212,0.03) 1px,transparent 1px);background-size:40px 40px}
+.glass-panel{background:rgba(17,24,39,0.7);backdrop-filter:blur(12px);border:1px solid var(--border-color);border-radius:8px}
+.neon-border{border:1px solid rgba(6,182,212,0.3);box-shadow:inset 0 0 20px rgba(6,182,212,0.05),0 0 10px rgba(6,182,212,0.1)}
+.status-active{animation:pulse-glow 2s infinite}
+.status-complete{border-color:var(--accent-green);animation:pulse-green 2s infinite}
+.progress-bar-fill{background:linear-gradient(90deg,var(--accent-cyan),var(--accent-green));background-size:200% 100%;animation:progress-shimmer 2s linear infinite;transition:width 0.5s ease}
+.terminal-cursor::after{content:'▋';animation:blink 1s infinite;color:var(--accent-cyan);margin-left:2px}
+.packet-row{transition:background 0.2s;font-family:var(--font-mono);font-size:12px;cursor:pointer}
+.packet-row:hover{background:rgba(6,182,212,0.05)}
+.packet-row.selected{background:rgba(6,182,212,0.15);color:var(--accent-cyan)}
+.packet-row:nth-child(even){background:rgba(255,255,255,0.02)}
+.packet-row:nth-child(even):hover{background:rgba(6,182,212,0.05)}
+.map-marker{width:12px;height:12px;background:var(--accent-cyan);border-radius:50%;position:relative;animation:marker-pulse 2s infinite;z-index:2;box-shadow:0 0 10px var(--accent-cyan)}
+.map-marker::after{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:40px;height:40px;border:1px solid var(--accent-cyan);border-radius:50%;animation:marker-pulse 2s infinite 0.5s}
+.map-marker-pulse{width:12px;height:12px;background:var(--accent-cyan);border-radius:50%;position:relative;animation:marker-pulse 2s infinite;z-index:2;box-shadow:0 0 10px var(--accent-cyan)}
+.map-marker-pulse::after{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:32px;height:32px;border:1px solid var(--accent-cyan);border-radius:50%;animation:marker-pulse 2s infinite 0.5s}
+.leaflet-container { font-family: var(--font-sans) !important; background: #0b0e1a !important; }
+.leaflet-bar { border: 1px solid var(--border-color) !important; background-color: var(--bg-secondary) !important; box-shadow: none !important; }
+.leaflet-bar a { background-color: var(--bg-secondary) !important; color: var(--text-primary) !important; border-bottom: 1px solid var(--border-color) !important; }
+.leaflet-bar a:hover { background-color: var(--bg-tertiary) !important; color: var(--accent-cyan) !important; }
+.leaflet-popup-content-wrapper { background: rgba(17, 24, 39, 0.95) !important; backdrop-filter: blur(8px); border: 1px solid var(--accent-cyan) !important; color: var(--text-primary) !important; border-radius: 6px !important; box-shadow: 0 0 15px rgba(6, 182, 212, 0.15) !important; }
+.leaflet-popup-tip { background: rgba(17, 24, 39, 0.95) !important; border-left: 1px solid var(--accent-cyan) !important; border-bottom: 1px solid var(--accent-cyan) !important; }
+.map-grid{background-image:linear-gradient(rgba(6,182,212,0.08) 1px,transparent 1px),linear-gradient(90deg,rgba(6,182,212,0.08) 1px,transparent 1px);background-size:30px 30px;position:relative;overflow:hidden}
+.stat-card{padding:16px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-card);transition:all 0.3s ease}
+.stat-card:hover{border-color:var(--accent-cyan);transform:translateY(-2px)}
+.stat-value{font-family:var(--font-mono);font-size:24px;font-weight:700;color:var(--accent-cyan);line-height:1}
+.stat-label{font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-muted);margin-top:8px}
+.stat-unit{font-size:12px;color:var(--text-secondary);margin-left:4px}
+.btn-cyber{padding:10px 24px;background:transparent;border:1px solid var(--accent-cyan);color:var(--accent-cyan);font-family:var(--font-mono);font-size:13px;text-transform:uppercase;letter-spacing:1px;cursor:pointer;border-radius:4px;transition:all 0.3s ease;display:inline-flex;align-items:center;gap:8px}
+.btn-cyber:hover{background:rgba(6,182,212,0.1);box-shadow:0 0 20px rgba(6,182,212,0.3)}
+.btn-cyber:active{transform:scale(0.98)}
+.btn-cyber.recording{border-color:var(--accent-red);color:var(--accent-red);animation:pulse-glow 2s infinite}
+.btn-cyber.paused{border-color:var(--accent-yellow);color:var(--accent-yellow)}
+.btn-cyber-secondary{padding:8px 16px;background:transparent;border:1px solid var(--border-color);color:var(--text-secondary);font-family:var(--font-mono);font-size:12px;cursor:pointer;border-radius:4px;transition:all 0.3s ease}
+.btn-cyber-secondary:hover{border-color:var(--accent-cyan);color:var(--accent-cyan)}
+.badge{padding:2px 8px;border-radius:3px;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px}
+.badge-medium{background:rgba(245,158,11,0.15);color:var(--accent-yellow);border:1px solid rgba(245,158,11,0.3)}
+.badge-high{background:rgba(239,68,68,0.15);color:var(--accent-red);border:1px solid rgba(239,68,68,0.3)}
+.badge-low{background:rgba(16,185,129,0.15);color:var(--accent-green);border:1px solid rgba(16,185,129,0.3)}
+.badge-clean{background:rgba(100,116,139,0.15);color:var(--text-muted);border:1px solid var(--border-color)}
+.nav-item{padding:12px 20px;display:flex;align-items:center;gap:12px;cursor:pointer;transition:all 0.2s ease;border-left:3px solid transparent;color:var(--text-secondary);font-size:14px}
+.nav-item:hover{background:rgba(6,182,212,0.05);color:var(--text-primary)}
+.nav-item.active{background:rgba(6,182,212,0.08);border-left-color:var(--accent-cyan);color:var(--accent-cyan)}
+.nav-icon{width:18px;height:18px;opacity:0.7}
+.nav-item.active .nav-icon{opacity:1}
+.section-title{font-family:var(--font-mono);font-size:11px;text-transform:uppercase;letter-spacing:2px;color:var(--text-muted);margin-bottom:12px;display:flex;align-items:center;justify-content:space-between}
+.section-title::after{content:'';flex:1;height:1px;background:var(--border-color);margin-left:12px}
+.intel-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border-color);font-size:13px}
+.intel-row:last-child{border-bottom:none}
+.intel-label{color:var(--text-muted);font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:1px}
+.intel-value{color:var(--text-primary);font-family:var(--font-mono);font-weight:500;font-size:12px;text-align:right}
+.intel-value.highlight{color:var(--accent-cyan)}
+.intel-value.warning{color:var(--accent-yellow)}
+.intel-value.danger{color:var(--accent-red)}
+.intel-value.success{color:var(--accent-green)}
+.log-entry{font-family:var(--font-mono);font-size:12px;line-height:1.6;padding:2px 0;opacity:0;animation:slide-in 0.3s ease forwards}
+.log-time{color:var(--text-muted);margin-right:8px}
+.capture-card{padding:16px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-card);transition:all 0.5s ease;position:relative;overflow:hidden;display:flex;flex-direction:column;justify-content:center}
+.capture-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--accent-cyan);transform:scaleX(0);transform-origin:left;transition:transform 0.5s ease}
+.capture-card.active::before{transform:scaleX(1)}
+.capture-card.complete::before{background:var(--accent-green);transform:scaleX(1)}
+.capture-card.active{border-color:var(--accent-cyan);animation:pulse-glow 2s infinite}
+.capture-card.complete{border-color:var(--accent-green)}
+.capture-card-number{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);margin-bottom:8px}
+.capture-card-title{font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px}
+.check-icon{width:16px;height:16px;border-radius:50%;border:1px solid var(--border-color);display:flex;align-items:center;justify-content:center;font-size:10px;transition:all 0.3s ease;flex-shrink:0}
+.check-icon.active{border-color:var(--accent-cyan);color:var(--accent-cyan)}
+.check-icon.complete{border-color:var(--accent-green);background:var(--accent-green);color:var(--bg-primary)}
+.dashboard-card{padding:16px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-card);text-align:center;transition:all 0.3s ease}
+.dashboard-card:hover{border-color:var(--accent-cyan)}
+.dashboard-card-value{font-family:var(--font-mono);font-size:28px;font-weight:700;color:var(--accent-cyan);line-height:1}
+.dashboard-card-label{font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-muted);margin-top:8px}
+.dashboard-card.active .dashboard-card-value{color:var(--accent-green)}
+.table-row-hover:hover{background:rgba(6,182,212,0.05)}
+.table-row-alt{background:rgba(255,255,255,0.02)}
+.input-cyber{background:var(--bg-card);border:1px solid var(--border-color);border-radius:4px;padding:8px 12px;color:var(--text-primary);font-family:var(--font-mono);font-size:13px;outline:none;transition:all 0.3s ease;width:100%}
+.input-cyber:focus{border-color:var(--accent-cyan);box-shadow:0 0 10px rgba(6,182,212,0.2)}
+.toggle-switch{width:40px;height:20px;background:var(--border-color);border-radius:10px;position:relative;cursor:pointer;transition:all 0.3s ease}
+.toggle-switch.active{background:var(--accent-cyan)}
+.toggle-switch::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;background:var(--text-primary);border-radius:50%;transition:all 0.3s ease}
+.toggle-switch.active::after{left:22px}
+.decoder-node{padding:8px 12px;border-left:2px solid var(--border-color);margin-left:8px}
+.decoder-node.active{border-left-color:var(--accent-cyan);background:rgba(6,182,212,0.05)}
+.decoder-field{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border-color);font-size:11px}
+.decoder-field:last-child{border-bottom:none}
+.ip-box{padding:12px;background:rgba(6,182,212,0.05);border:1px solid rgba(6,182,212,0.3);border-radius:6px;margin-bottom:12px;text-align:center}
+.ip-box-label{font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-muted);margin-bottom:4px}
+.ip-box-value{font-size:18px;font-family:var(--font-mono);font-weight:700;color:var(--accent-cyan)}
+.spinner{width:14px;height:14px;border:2px solid var(--border-color);border-top-color:var(--accent-cyan);border-radius:50%;animation:spin 0.8s linear infinite;display:inline-block}
+#app-toast{position:fixed;bottom:24px;right:24px;background:rgba(17,24,39,0.95);border:1px solid var(--accent-cyan);color:var(--text-primary);padding:12px 20px;border-radius:8px;font-family:var(--font-mono);font-size:13px;z-index:99999;box-shadow:0 0 20px rgba(6,182,212,0.3);max-width:400px;transition:opacity 0.3s,transform 0.3s;opacity:0;transform:translateY(10px);pointer-events:none}
+#app-toast.show{opacity:1;transform:translateY(0)}
+#app-toast.error{border-color:var(--accent-red);box-shadow:0 0 20px rgba(239,68,68,0.3)}
+.btn-filter-preset{padding:3px 6px;border-radius:3px;font-family:var(--font-mono);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;cursor:pointer;transition:all 0.2s ease;background:rgba(15,23,42,0.6);color:var(--text-secondary);border:1px solid rgba(6,182,212,0.15);outline:none}
+.btn-filter-preset:hover:not(:disabled){border-color:var(--accent-cyan);color:var(--text-primary)}
+.btn-filter-preset.active{background:rgba(6,182,212,0.15);color:var(--accent-cyan);border-color:var(--accent-cyan);box-shadow:0 0 10px rgba(6,182,212,0.2)}
+.btn-filter-preset:disabled{opacity:0.4;cursor:not-allowed}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<div id="app-toast"></div>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script>
+(function(){
+'use strict';
+const { useState, useEffect, useRef, useCallback, useMemo, Fragment } = React;
+function h(type,props,...children){return React.createElement(type,props,...children)}
+
+const API_BASE = window.location.origin;
+const _metaKey = document.getElementById('bootstrap-api-key');
+const BOOTSTRAP_API_KEY = _metaKey ? _metaKey.getAttribute('content') : '';
+function getKey(){
+  let k = localStorage.getItem('wirestream_api_key');
+  if (BOOTSTRAP_API_KEY && !BOOTSTRAP_API_KEY.startsWith('{') && k !== BOOTSTRAP_API_KEY) {
+    localStorage.setItem('wirestream_api_key', BOOTSTRAP_API_KEY);
+    k = BOOTSTRAP_API_KEY;
+  }
+  return k || '';
+}
+function setKey(k){localStorage.setItem('wirestream_api_key',k);}
+
+
+let _toastTm=null;
+function toast(msg,type='info'){
+  const el=document.getElementById('app-toast');
+  if(!el) return;
+  el.textContent=msg;
+  el.className='show '+(type==='error'?'error':type==='success'?'success':'');
+  if(_toastTm)clearTimeout(_toastTm);
+  _toastTm=setTimeout(()=>{el.className='';},4200);
+}
+
+async function api(path,opts={}){
+  const k=getKey();
+  const headers={'Content-Type':'application/json',...(k?{'Authorization':'Bearer '+k}:{}),...(opts.headers||{})};
+  const r=await fetch(API_BASE+path,{...opts,headers});
+  if(!r.ok){const t=await r.text().catch(()=>'');throw new Error('HTTP '+r.status+' '+t.slice(0,120));}
+  return r.json();
+}
+
+async function apiBlob(path){
+  const k=getKey();
+  const r=await fetch(API_BASE+path,{headers:k?{'Authorization':'Bearer '+k}:{}});
+  if(!r.ok)throw new Error('HTTP '+r.status);
+  return r.blob();
+}
+
+// Icons
+function IconActivity(){return h('svg',{width:16,height:16,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('path',{d:'M22 12h-4l-3 9L9 3l-3 9H2'}))}
+function IconRadio(){return h('svg',{width:16,height:16,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('circle',{cx:12,cy:12,r:2}),h('path',{d:'M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14'}))}
+function IconSearch(){return h('svg',{width:16,height:16,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('circle',{cx:11,cy:11,r:8}),h('path',{d:'m21 21-4.35-4.35'}))}
+function IconFileText(){return h('svg',{width:16,height:16,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('path',{d:'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'}),h('polyline',{points:'14 2 14 8 20 8'}),h('line',{x1:16,y1:13,x2:8,y2:13}),h('line',{x1:16,y1:17,x2:8,y2:17}))}
+function IconShield(){return h('svg',{width:16,height:16,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('path',{d:'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'}))}
+function IconSettings(){return h('svg',{width:16,height:16,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('circle',{cx:12,cy:12,r:3}),h('path',{d:'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z'}))}
+function IconPlay(){return h('svg',{width:14,height:14,viewBox:'0 0 24 24',fill:'currentColor'},h('polygon',{points:'5 3 19 12 5 21 5 3'}))}
+function IconSquare(){return h('svg',{width:14,height:14,viewBox:'0 0 24 24',fill:'currentColor'},h('rect',{x:3,y:3,width:18,height:18,rx:2}))}
+function IconPause(){return h('svg',{width:14,height:14,viewBox:'0 0 24 24',fill:'currentColor'},h('rect',{x:6,y:4,width:4,height:16}),h('rect',{x:14,y:4,width:4,height:16}))}
+function IconResume(){return h('svg',{width:14,height:14,viewBox:'0 0 24 24',fill:'currentColor'},h('polygon',{points:'5 3 19 12 5 21 5 3'}))}
+function IconCheck(){return h('svg',{width:10,height:10,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:3},h('polyline',{points:'20 6 9 17 4 12'}))}
+function IconGlobe(){return h('svg',{width:16,height:16,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('circle',{cx:12,cy:12,r:10}),h('line',{x1:2,y1:12,x2:22,y2:12}),h('path',{d:'M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z'}))}
+function IconWifi(){return h('svg',{width:14,height:14,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('path',{d:'M5 12.55a11 11 0 0 1 14.08 0'}),h('path',{d:'M1.42 9a16 16 0 0 1 21.16 0'}),h('path',{d:'M8.53 16.11a6 6 0 0 1 6.95 0'}),h('line',{x1:12,y1:20,x2:12.01,y2:20}))}
+function IconServer(){return h('svg',{width:14,height:14,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('rect',{x:2,y:2,width:20,height:8,rx:2,ry:2}),h('rect',{x:2,y:14,width:20,height:8,rx:2,ry:2}),h('line',{x1:6,y1:6,x2:6.01,y2:6}),h('line',{x1:6,y1:18,x2:6.01,y2:18}))}
+function IconNetwork(){return h('svg',{width:16,height:16,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('circle',{cx:12,cy:5,r:3}),h('circle',{cx:5,cy:19,r:3}),h('circle',{cx:19,cy:19,r:3}),h('line',{x1:12,y1:8,x2:5,y2:16}),h('line',{x1:12,y1:8,x2:19,y2:16}))}
+function IconClock(){return h('svg',{width:14,height:14,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('circle',{cx:12,cy:12,r:10}),h('polyline',{points:'12 6 12 12 16 14'}))}
+function IconHash(){return h('svg',{width:14,height:14,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('line',{x1:4,y1:9,x2:20,y2:9}),h('line',{x1:4,y1:15,x2:20,y2:15}),h('line',{x1:10,y1:3,x2:8,y2:21}),h('line',{x1:16,y1:3,x2:14,y2:21}))}
+function IconEye(){return h('svg',{width:14,height:14,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('path',{d:'M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z'}),h('circle',{cx:12,cy:12,r:3}))}
+function IconDownload(){return h('svg',{width:14,height:14,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('path',{d:'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'}),h('polyline',{points:'7 10 12 15 17 10'}),h('line',{x1:12,y1:15,x2:12,y2:3}))}
+function IconTrash(){return h('svg',{width:14,height:14,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('polyline',{points:'3 6 5 6 21 6'}),h('path',{d:'M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2'}))}
+function IconRefresh(){return h('svg',{width:14,height:14,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('polyline',{points:'23 4 23 10 17 10'}),h('path',{d:'M20.49 15a9 9 0 1 1-2.12-9.36L23 10'}))}
+function IconFilter(){return h('svg',{width:14,height:14,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('polygon',{points:'22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3'}))}
+function IconDatabase(){return h('svg',{width:14,height:14,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('ellipse',{cx:12,cy:5,rx:9,ry:3}),h('path',{d:'M21 12c0 1.66-4 3-9 3s-9-1.34-9-3'}),h('path',{d:'M3 5v14c0 1.66 4 3 9 3s 9-1.34 9-3V5'}))}
+function IconLayers(){return h('svg',{width:14,height:14,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('polygon',{points:'12 2 2 7 12 12 22 7 12 2'}),h('polyline',{points:'2 17 12 22 22 17'}),h('polyline',{points:'2 12 12 17 22 12'}))}
+function IconSliders(){return h('svg',{width:14,height:14,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('line',{x1:4,y1:21,x2:4,y2:14}),h('line',{x1:4,y1:10,x2:4,y2:3}),h('line',{x1:12,y1:21,x2:12,y2:12}),h('line',{x1:12,y1:8,x2:12,y2:3}),h('line',{x1:20,y1:21,x2:20,y2:16}),h('line',{x1:20,y1:12,x2:20,y2:3}),h('line',{x1:1,y1:14,x2:7,y2:14}),h('line',{x1:9,y1:8,x2:15,y2:8}),h('line',{x1:17,y1:16,x2:23,y2:16}))}
+function IconFile(){return h('svg',{width:14,height:14,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('path',{d:'M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z'}),h('polyline',{points:'13 2 13 9 20 9'}))}
+function IconPhoneVoip(){return h('svg',{width:16,height:16,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('path',{d:'M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z'}),h('path',{d:'M15 10l5-5'}),h('path',{d:'M15 5h5v5'}))}
+function IconUpload(){return h('svg',{width:48,height:48,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.5},h('path',{d:'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'}),h('polyline',{points:'17 8 12 3 7 8'}),h('line',{x1:12,y1:3,x2:12,y2:15}))}
+function IconCpu(){return h('svg',{width:16,height:16,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('rect',{x:4,y:4,width:16,height:16,rx:2,ry:2}),h('rect',{x:9,y:9,width:6,height:6}),h('line',{x1:9,y1:1,x2:9,y2:4}),h('line',{x1:15,y1:1,x2:15,y2:4}),h('line',{x1:9,y1:20,x2:9,y2:23}),h('line',{x1:15,y1:20,x2:15,y2:23}),h('line',{x1:20,y1:9,x2:23,y2:9}),h('line',{x1:20,y1:14,x2:23,y2:14}),h('line',{x1:1,y1:9,x2:4,y2:9}),h('line',{x1:1,y1:14,x2:4,y2:14}))}
+function IconSave(){return h('svg',{width:14,height:14,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('path',{d:'M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z'}),h('polyline',{points:'17 21 17 13 7 13 7 21'}),h('polyline',{points:'7 3 7 8 15 8'}))}
+function IconKey(){return h('svg',{width:14,height:14,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('path',{d:'M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4'}))}
+function IconAlert(){return h('svg',{width:14,height:14,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2},h('path',{d:'M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z'}),h('line',{x1:12,y1:9,x2:12,y2:13}),h('line',{x1:12,y1:17,x2:12.01,y2:17}))}
+
+// Data
+const MILESTONES=[
+  {id:1,title:'Capture Started',type:'info'},
+  {id:2,title:'Call Detection',type:'info'},
+  {id:3,title:'VoIP Packet Interception',type:'info'},
+  {id:4,title:'Protocol Analysis',type:'info'},
+  {id:5,title:'IP Address Extraction',type:'info'},
+  {id:6,title:'Geo-Location Mapping',type:'info'}
+];
+function getPacketDetails(pkt) {
+  if(!pkt) return null;
+  return [
+    {name:'Frame', fields:[{k:'Size', v:pkt.len+' bytes'}, {k:'Time', v:pkt.time}, {k:'Number', v:pkt.id}]},
+    {name:'Internet Protocol', fields:[{k:'Source IP', v:pkt.src}, {k:'Destination IP', v:pkt.dst}, {k:'Protocol', v:pkt.proto}]}
+  ];
+}
+
+// ─── Components ───
+function Header(props){
+  const {isCapturing,onToggle,elapsed,investigationId,interfaces,selectedIface,onIfaceChange,bpfFilter,onBpfChange,onRefreshInterfaces,onDownloadPcap,onRestartServer}=props;
+
+  const options = interfaces.map(function(i){
+    const isObj = typeof i === 'object' && i !== null;
+    const value = isObj ? (i.id || i.name || '') : String(i || '');
+    let label = isObj ? (i.description || i.name || i.id || '') : String(i || '');
+
+    if (isObj && i.ip && i.ip !== 'No IP') {
+      label = label + ' (' + i.ip + ')';
+    }
+    return h('option', { key: value, value: value }, label);
+  });
+
+  return h('header',{style:{background:'var(--bg-secondary)',borderBottom:'1px solid var(--border-color)',position:'relative',zIndex:50}},
+    h('div',{style:{height:'56px',display:'flex',alignItems:'center',justifyContent:'space-between',padding:'0 24px'}},
+      h('div',{style:{display:'flex',alignItems:'center',gap:'12px'}},
+        h('div',{style:{display:'flex',alignItems:'center',gap:'8px'}},h(IconRadio),h('span',{style:{fontFamily:'var(--font-mono)',fontSize:'14px',fontWeight:700,letterSpacing:'2px',textTransform:'uppercase'}},'DeepLive VOIP Capture')),
+        h('span',{style:{color:'var(--text-muted)',fontSize:'11px',textTransform:'uppercase',letterSpacing:'1px'}},'VoIP Forensics')
+      ),
+      h('div',{style:{display:'flex',alignItems:'center',gap:'24px'}},
+        h('div',{style:{display:'flex',alignItems:'center',gap:'8px',fontFamily:'var(--font-mono)',fontSize:'12px',color:'var(--text-muted)'}},h(IconClock),h('span',{id:'hdr-clock'},new Date().toISOString().split('T')[0]+' '+new Date().toISOString().split('T')[1].split('.')[0]+' UTC')),
+        h('div',{style:{display:'flex',alignItems:'center',gap:'8px',fontFamily:'var(--font-mono)',fontSize:'12px',color:'var(--text-muted)'}},h(IconHash),h('span',{},'INV '+investigationId)),
+        h('div',{style:{display:'flex',alignItems:'center',gap:'8px',fontFamily:'var(--font-mono)',fontSize:'12px',color:'var(--text-muted)'}},h(IconActivity),h('span',{},'Elapsed '+elapsed))
+      )
+    ),
+    h('div',{style:{minHeight:'56px',display:'flex',alignItems:'flex-end',gap:'16px',padding:'8px 24px 12px 24px',borderTop:'1px solid var(--border-color)',flexWrap:'wrap'}},
+      h('div',{style:{display:'flex',flexDirection:'column',gap:'4px',minWidth:'280px'}},
+        h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center'}},
+          h('label',{style:{fontSize:'10px',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'1px'}},'Interface'),
+          h('button',{
+            onClick: onRefreshInterfaces,
+            disabled: isCapturing,
+            style: { border: 'none', background: 'none', color: 'var(--accent-cyan)', fontSize: '9px', fontFamily: 'var(--font-mono)', cursor: 'pointer', textTransform: 'uppercase', padding: 0 }
+          }, '🔄 Re-scan Device')
+        ),
+        h('select',{
+          className: 'input-cyber',
+          style: { padding: '4px 8px', height: '32px', cursor: 'pointer' },
+          value: selectedIface,
+          onChange: e => onIfaceChange(e.target.value),
+          disabled: isCapturing || interfaces.length === 0
+        },
+          interfaces.length === 0 ? 
+            [h('option',{key:'loading',value:''},'Scanning device...')] : 
+            options
+        )
+      ),
+      h('div',{style:{flex:1,display:'flex',flexDirection:'column',gap:'6px',minWidth:'320px'}},
+        h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center'}},
+          h('label',{style:{fontSize:'10px',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'1px'}},'Capture BPF Filter'),
+          h('span',{style:{fontSize:'9px',color:'var(--text-muted)',fontFamily:'var(--font-mono)'}},'Valid BPF kernel expression')
+        ),
+        h('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}},
+          [
+            { label: 'All VoIP',  bpf: 'udp or (tcp and (port 5060 or port 5061 or port 3478 or port 443))' },
+            { label: 'SIP',       bpf: 'tcp port 5060 or tcp port 5061 or udp port 5060 or udp port 5061' },
+            { label: 'RTP/STUN',  bpf: 'udp and not (port 53 or port 5353 or port 5060 or port 5061)' },
+            { label: 'STUN/TURN', bpf: 'udp port 3478 or tcp port 3478 or tcp port 443 or udp port 19302' },
+            { label: 'DNS',       bpf: 'port 53 or port 5353' },
+            { label: 'TLS',       bpf: 'tcp port 443' },
+            { label: 'UDP only',  bpf: 'udp' },
+            { label: 'All',       bpf: '' },
+          ].map(function(item){
+            const isActive = bpfFilter === item.bpf;
+            return h('button',{
+              key: item.label,
+              disabled: isCapturing,
+              onClick: function(){ onBpfChange(item.bpf); },
+              className: 'btn-filter-preset' + (isActive ? ' active' : '')
+            }, item.label);
+          })
+        ),
+        h('input',{className:'input-cyber',style:{padding:'4px 8px',height:'32px'},value:bpfFilter,onChange:e=>onBpfChange(e.target.value),disabled:isCapturing})
+      ),
+      h('div',{style:{display:'flex',flexDirection:'column',gap:'6px',alignItems:'stretch',alignSelf:'flex-end'}},
+        h('div',{style:{display:'flex',gap:'6px'}},
+          !isCapturing && investigationId && investigationId !== '—' && h('button',{
+            onClick: onDownloadPcap,
+            className: 'btn-cyber-secondary',
+            style: { height: '32px', fontSize: '11px', padding: '0 12px', background: 'rgba(6, 182, 212, 0.15)', color: 'var(--accent-cyan)', border: '1px solid var(--accent-cyan)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }
+          }, h(IconDownload), ' Save PCAP File'),
+          h('button',{
+            onClick: onRestartServer,
+            className: 'btn-cyber-secondary',
+            title: 'Reset backend engines & auto-resume capture',
+            style: { height: '32px', fontSize: '11px', padding: '0 12px', background: 'rgba(234, 179, 8, 0.15)', color: 'var(--accent-yellow)', border: '1px solid var(--accent-yellow)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }
+          }, h(IconRefresh), ' Refresh Server')
+        ),
+        h('button',{onClick:onToggle,className:'btn-cyber '+(isCapturing?'recording':''),style:{height:'32px',padding:'0 20px'}},isCapturing?h(IconSquare):h(IconPlay),isCapturing?'Stop Capture':'Start Capture')
+      )
+    )
+  );
+}
+
+function Sidebar(props){
+  const {activeTab,setActiveTab,isCapturing}=props;
+  const items=[
+    {id:'live',label:'Live Investigation',icon:IconActivity},
+    {id:'decoder',label:'Packet Decoder',icon:IconCpu},
+    {id:'voip',label:'VoIP Analyzer',icon:IconPhoneVoip},
+    {id:'geoip',label:'GeoIP & DNS',icon:IconGlobe}, 
+    {id:'reports',label:'Reports',icon:IconFileText},
+    {id:'settings',label:'Settings',icon:IconSettings}
+  ];
+  return h('aside',{style:{width:'220px',borderRight:'1px solid var(--border-color)',background:'var(--bg-secondary)',display:'flex',flexDirection:'column',padding:'16px 0'}},
+    items.map(function(item){return h('div',{key:item.id,className:'nav-item '+(activeTab===item.id?'active':''),onClick:function(){setActiveTab(item.id);}},
+      h('span',{className:'nav-icon'},h(item.icon)),
+      item.label
+    );}),
+    h('div',{style:{marginTop:'auto',padding:'16px 20px',borderTop:'1px solid var(--border-color)'}},
+      h('div',{className:'nav-item',style:{borderLeft:'none',padding:'0 0 12px 0'},onClick:function(){setActiveTab('upload');}},
+         h('span',{className:'nav-icon'},h(IconUpload)),
+         'Upload PCAP / Logs'
+      ),
+      h('div',{style:{fontSize:'11px',color:'var(--text-muted)',marginTop:'12px'}},isCapturing?'● capturing packets':'● no active capture')
+    )
+  );
+}
+
+function StatusCards(props){
+  const {milestones}=props;
+  return h('div',{style:{display:'grid',gridTemplateColumns:'repeat(6, 1fr)',gap:'12px',marginBottom:'16px'}},
+    MILESTONES.map(function(m,i){
+      const status=milestones[i]||'pending';
+      return h('div',{key:m.id,className:'capture-card '+(status==='active'?'active ':'')+(status==='complete'?'complete':''),style:{animationDelay:(i*0.1)+'s'}},
+        h('div',{className:'capture-card-number'},'Step '+m.id),
+        h('div',{className:'capture-card-title'},
+          h('span',{className:'check-icon '+(status==='active'?'active ':'')+(status==='complete'?'complete':'')},status==='complete'?h(IconCheck):''),
+          m.title
+        )
+      );
+    })
+  );
+}
+
+function TerminalLog(props){
+  const {logs}=props;
+  const scrollRef=useRef(null);
+  useEffect(function(){if(scrollRef.current)scrollRef.current.scrollTop=scrollRef.current.scrollHeight;},[logs]);
+  return h('div',{className:'glass-panel neon-border',style:{padding:'16px',height:'320px',overflow:'auto',fontFamily:'var(--font-mono)',position:'relative'}},
+    h('div',{className:'section-title'},h('span',{},'Live Forensic Log'),h('span',{style:{fontSize:'10px',color:'var(--text-muted)'}},'wirestream://tail -f')),
+    h('div',{ref:scrollRef,style:{display:'flex',flexDirection:'column',gap:'2px',height:'calc(100% - 30px)',overflow:'auto'}},
+      logs.map(function(log,i){return h('div',{key:i,className:'log-entry log-'+log.type,style:{animationDelay:'0s'}},
+        h('span',{className:'log-time'},'['+log.time+']'),
+        h('span',{style:{textTransform:'uppercase',fontSize:'10px',marginRight:'8px',color:'var(--text-muted)'}},log.level),
+        log.message
+      );}),
+      h('div',{className:'terminal-cursor',style:{fontSize:'12px',color:'var(--text-muted)'}},'_')
+    )
+  );
+}
+
+function GeoPanel(props){
+  const {profile, isCapturing}=props;
+  const mapRef = useRef(null);
+
+  useEffect(function(){
+    if (isCapturing || !profile || !profile.ip || !mapRef.current) {
+      return;
+    }
+
+    const lat = parseFloat(profile.lat) || 0;
+    const lon = parseFloat(profile.lon) || 0;
+
+    const map = L.map(mapRef.current, { zoomControl: false }).setView([lat, lon], 10);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      maxZoom: 19
+    }).addTo(map);
+    
+    L.control.zoom({ position: 'topright' }).addTo(map);
+
+    // Accuracy Precision Circle representation
+    L.circle([lat, lon], {
+      color: '#06b6d4',
+      fillColor: '#06b6d4',
+      fillOpacity: 0.15,
+      weight: 1,
+      radius: 6000 // 6km precision radius
+    }).addTo(map);
+
+    const pulseIcon = L.divIcon({
+      className: 'custom-div-icon',
+      html: "<div class='map-marker-pulse'></div>",
+      iconSize: [24, 24],
+      iconAnchor: [12, 12]
+    });
+    const marker = L.marker([lat, lon], { icon: pulseIcon }).addTo(map);
+
+    const popupContent = '<div style="font-family: var(--font-sans); font-size: 11px; color: #e2e8f0; line-height: 1.4;">' +
+      '<div style="color: #06b6d4; font-weight: 700; font-family: var(--font-mono); margin-bottom: 4px; font-size: 12px; border-bottom: 1px solid rgba(6,182,212,0.3); padding-bottom: 2px;">' + (profile.ip || '') + '</div>' +
+      '<div style="font-weight: 600;">' + (profile.city || 'Unknown City') + ', ' + (profile.country || 'Unknown Country') + '</div>' +
+      '<div style="color: #94a3b8; font-size: 10px; margin-top: 2px;">' + (profile.isp || '') + '</div>' +
+      '</div>';
+    marker.bindPopup(popupContent).openPopup();
+
+    setTimeout(function(){
+      map.invalidateSize();
+    }, 150);
+
+    return function() {
+      map.remove();
+    };
+  }, [profile, isCapturing]);
+
+  if (isCapturing || !profile || !profile.ip) {
+    return h('div',{className:'glass-panel neon-border',style:{padding:'24px',height:'320px',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',color:'var(--text-muted)',fontFamily:'var(--font-mono)',fontSize:'12px',textAlign:'center',gap:'12px'}},
+      h(IconGlobe, { style: { width: '32px', height: '32px', color: 'var(--accent-cyan)' } }),
+      'No geographical target resolved yet. Start a live capture sniffing session to dynamically resolve remote endpoints.'
+    );
+  }
+  return h('div',{className:'glass-panel neon-border',style:{padding:'16px',height:'320px'}},
+    h('div',{className:'section-title'},h('span',{},h(IconGlobe),' Geo Location'),h('span',{style:{fontSize:'10px',color:'var(--text-muted)'}},'RESOLVED')),
+    h('div',{style:{display:'flex',gap:'16px',height:'calc(100% - 30px)'}},
+      h('div',{ref:mapRef,style:{flex:1.4,borderRadius:'6px',border:'1px solid var(--border-color)',overflow:'hidden',background:'#0b0e1a'}}),
+      h('div',{style:{flex:1,display:'flex',flexDirection:'column',gap:'0',overflow:'auto'}},
+        h('div',{className:'ip-box'},
+          h('div',{className:'ip-box-label'},'Public IP'),
+          h('div',{className:'ip-box-value'},profile.ip)
+        ),
+        h('div',{className:'intel-row'},h('span',{className:'intel-label'},'Country'),h('span',{className:'intel-value'},profile.country || '—')),
+        h('div',{className:'intel-row'},h('span',{className:'intel-label'},'State'),h('span',{className:'intel-value'},profile.state || '—')),
+        h('div',{className:'intel-row'},h('span',{className:'intel-label'},'City'),h('span',{className:'intel-value highlight'},profile.city || '—')),
+        h('div',{className:'intel-row'},h('span',{className:'intel-label'},'Coordinates'),h('span',{className:'intel-value'},(profile.lat || '—') + ', ' + (profile.lon || '—'))),
+        h('div',{className:'intel-row'},h('span',{className:'intel-label'},'ASN'),h('span',{className:'intel-value highlight'},profile.asn || '—')),
+        h('div',{className:'intel-row'},h('span',{className:'intel-label'},'ISP'),h('span',{className:'intel-value'},profile.isp || '—')),
+        h('div',{className:'intel-row'},h('span',{className:'intel-label'},'Org'),h('span',{className:'intel-value warning'},profile.org || '—'))
+      )
+    )
+  );
+}
+
+function ASNMapper(props) {
+  const { profile, activeIPs, selectedIP, setSelectedIP } = props;
+
+  const rows = useMemo(function() {
+    const list = [...(activeIPs || [])];
+    if (profile && profile.ip && !list.some(function(x){ return x.ip === profile.ip; })) {
+      list.unshift({
+        ip: profile.ip,
+        asn: profile.asn || '—',
+        org: profile.isp || profile.org || '—',
+        city: profile.city || '',
+        country: profile.country || '',
+        state: profile.state || '',
+        lat: profile.lat || 0,
+        lon: profile.lon || 0,
+        isp: profile.isp || ''
+      });
+    }
+    return list;
+  }, [profile, activeIPs]);
+
+  const currentSelection = useMemo(function() {
+    const target = selectedIP || (profile && profile.ip);
+    if (!target) return null;
+    const found = rows.find(function(x) { return x.ip === target; });
+    if (found) return found;
+    return {
+      ip: profile.ip,
+      asn: profile.asn || '—',
+      org: profile.isp || profile.org || '—',
+      city: profile.city || '',
+      country: profile.country || '',
+      state: profile.state || '',
+      lat: profile.lat || 0,
+      lon: profile.lon || 0,
+      isp: profile.isp || ''
+    };
+  }, [selectedIP, profile, rows]);
+
+  return h('div', { className: 'glass-panel neon-border', style: { padding: '16px', height: '100%', display: 'flex', flexDirection: 'column' } },
+    h('div', { className: 'section-title' }, h('span', {}, h(IconNetwork), ' ASN Routing & DNS Mapper'), h('span', { style: { fontSize: '10px', color: 'var(--accent-cyan)' } }, 'DESTINATION IP MAPPING')),
+    h('div', { style: { flex: 1, overflow: 'hidden', marginTop: '4px', display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '12px' } },
+      h('div', { style: { overflowY: 'auto', borderRight: '1px solid var(--border-color)', paddingRight: '8px' } },
+        h('table', { style: { width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-mono)', fontSize: '11px' } },
+          h('thead', {}, h('tr', { style: { borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', textAlign: 'left' } },
+            h('th', { style: { padding: '6px 4px' } }, 'Target IP'),
+            h('th', { style: { padding: '6px 4px' } }, 'ASN'),
+            h('th', { style: { padding: '6px 4px' } }, 'Routing ASN Org')
+          )),
+          h('tbody', {}, rows.length === 0 ?
+            h('tr', {}, h('td', { colSpan: 3, style: { padding: '20px 8px', color: 'var(--text-muted)', textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: '11px' } }, 'No IP targets resolved yet.')) :
+            rows.map(function(row, i) {
+              const isSelected = currentSelection && currentSelection.ip === row.ip;
+              return h('tr', {
+                key: i,
+                onClick: function() { setSelectedIP(row.ip); },
+                style: {
+                  borderBottom: '1px solid var(--border-color)',
+                  cursor: 'pointer',
+                  background: isSelected ? 'rgba(6, 182, 212, 0.15)' : 'transparent',
+                  color: isSelected ? 'var(--accent-cyan)' : 'var(--text-primary)'
+                }
+              },
+                h('td', { style: { padding: '6px 4px', fontWeight: isSelected ? 'bold' : 'normal' } }, row.ip),
+                h('td', { style: { padding: '6px 4px' } }, row.asn),
+                h('td', { style: { padding: '6px 4px' } }, row.org)
+              );
+            })
+          )
+        )
+      ),
+      h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px', paddingLeft: '4px', overflowY: 'auto' } },
+        currentSelection ? [
+          h('div', { className: 'ip-box' },
+            h('div', { className: 'ip-box-label' }, 'Target IP'),
+            h('div', { className: 'ip-box-value' }, currentSelection.ip)
+          ),
+          h('div', { className: 'intel-row' }, h('span', { className: 'intel-label' }, 'Country'), h('span', { className: 'intel-value' }, currentSelection.country || '—')),
+          h('div', { className: 'intel-row' }, h('span', { className: 'intel-label' }, 'City'), h('span', { className: 'intel-value highlight' }, currentSelection.city || '—')),
+          h('div', { className: 'intel-row' }, h('span', { className: 'intel-label' }, 'Coordinates'), h('span', { className: 'intel-value' }, (currentSelection.lat || '—') + ', ' + (currentSelection.lon || '—'))),
+          h('div', { className: 'intel-row' }, h('span', { className: 'intel-label' }, 'ISP'), h('span', { className: 'intel-value' }, currentSelection.isp || '—')),
+          h('div', { className: 'intel-row' }, h('span', { className: 'intel-label' }, 'Organization'), h('span', { className: 'intel-value' }, currentSelection.org || '—')),
+          h('div', { className: 'intel-row' }, h('span', { className: 'intel-label' }, 'ASN'), h('span', { className: 'intel-value highlight' }, currentSelection.asn || '—'))
+        ] : [
+          h('div', { key: 'empty', style: { padding: '20px', textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: '11px' } }, 'Select a target IP to display details.')
+        ]
+      )
+    )
+  );
+}
+
+function PacketViewer(props){
+  const {packets}=props;
+  return h('div',{className:'glass-panel',style:{padding:'16px',marginBottom:'16px',maxHeight:'320px',overflow:'auto'}},
+    h('div',{className:'section-title'},h('span',{},h(IconEye),' Live Packet Viewer'),h('span',{style:{fontSize:'10px',color:'var(--text-muted)'}},packets.length+' packets')),
+    h('table',{style:{width:'100%',borderCollapse:'collapse',fontFamily:'var(--font-mono)',fontSize:'12px'}},
+      h('thead',{},h('tr',{style:{borderBottom:'1px solid var(--border-color)',color:'var(--text-muted)',textAlign:'left'}},
+        h('th',{style:{padding:'8px 4px',fontWeight:500}},'#'),
+        h('th',{style:{padding:'8px 4px',fontWeight:500}},'Time'),
+        h('th',{style:{padding:'8px 4px',fontWeight:500}},'Proto'),
+        h('th',{style:{padding:'8px 4px',fontWeight:500}},'Source'),
+        h('th',{style:{padding:'8px 4px',fontWeight:500}},'Destination'),
+        h('th',{style:{padding:'8px 4px',fontWeight:500}},'Len'),
+        h('th',{style:{padding:'8px 4px',fontWeight:500}},'Info')
+      )),
+      h('tbody',{},packets.slice(-20).map(function(p,i){
+        const proto = (p.proto || p.protocol || 'SRTP').toUpperCase();
+        const bg=proto==='SRTP'?'rgba(6,182,212,0.15)':proto==='RTCP'?'rgba(139,92,246,0.15)':'rgba(245,158,11,0.15)';
+        const color=proto==='SRTP'?'var(--accent-cyan)':proto==='RTCP'?'var(--accent-purple)':'var(--accent-yellow)';
+        const border=proto==='SRTP'?'rgba(6,182,212,0.3)':proto==='RTCP'?'rgba(139,92,246,0.3)':'rgba(245,158,11,0.3)';
+        return h('tr',{key:i,className:'packet-row'},
+          h('td',{style:{padding:'6px 4px',color:'var(--text-muted)'}},p.num || i+1),
+          h('td',{style:{padding:'6px 4px',color:'var(--text-muted)'}},p.time),
+          h('td',{style:{padding:'6px 4px'}},h('span',{style:{padding:'2px 6px',borderRadius:'3px',fontSize:'10px',background:bg,color:color,border:'1px solid '+border}},proto)),
+          h('td',{style:{padding:'6px 4px'}},p.src),
+          h('td',{style:{padding:'6px 4px'}},p.dst),
+          h('td',{style:{padding:'6px 4px',color:'var(--text-muted)'}},p.len || p.length || 0),
+          h('td',{style:{padding:'6px 4px',color:'var(--text-secondary)'}},p.info || p.summary || '')
+        );
+      }))
+    )
+  );
+}
+
+function InvestigationSummary(props){
+  const {profile,stats,investigationId,isCapturing,onPromote}=props;
+  return h('div',{className:'glass-panel',style:{padding:'16px'}},
+    h('div',{className:'section-title'},
+      h('span',{},'Investigation Summary'),
+      h('div',{style:{display:'flex',gap:'8px',alignItems:'center'}},
+        !isCapturing && investigationId && investigationId !== '—' && h('button',{className:'btn-cyber-secondary',style:{padding:'2px 8px',fontSize:'10px',background:'rgba(6, 182, 212, 0.15)',color:'var(--accent-cyan)',border:'1px solid var(--accent-cyan)'},onClick:onPromote},h(IconSave),' Save'),
+        h('span',{style:{fontSize:'10px',color:'var(--text-muted)'}},isCapturing?'CAPTURING':'STOPPED')
+      )
+    ),
+    h('div',{style:{display:'grid',gridTemplateColumns:'repeat(8, 1fr)',gap:'16px',fontFamily:'var(--font-mono)',fontSize:'12px'}},
+      h('div',{},h('div',{style:{color:'var(--text-muted)',fontSize:'10px',textTransform:'uppercase',letterSpacing:'1px',marginBottom:'4px'}},'Investigation ID'),h('div',{style:{color:'var(--accent-cyan)',fontWeight:600}},investigationId)),
+      h('div',{},h('div',{style:{color:'var(--text-muted)',fontSize:'10px',textTransform:'uppercase',letterSpacing:'1px',marginBottom:'4px'}},'Capture Time'),h('div',{},stats.startTime)),
+      h('div',{},h('div',{style:{color:'var(--text-muted)',fontSize:'10px',textTransform:'uppercase',letterSpacing:'1px',marginBottom:'4px'}},'Duration'),h('div',{},stats.duration)),
+      h('div',{},h('div',{style:{color:'var(--text-muted)',fontSize:'10px',textTransform:'uppercase',letterSpacing:'1px',marginBottom:'4px'}},'Primary Protocol'),h('div',{style:{color:'var(--accent-cyan)'}},profile.ip ? 'SRTP' : '—')),
+      h('div',{},h('div',{style:{color:'var(--text-muted)',fontSize:'10px',textTransform:'uppercase',letterSpacing:'1px',marginBottom:'4px'}},'Remote IP'),h('div',{},profile.ip || '—')),
+      h('div',{},h('div',{style:{color:'var(--text-muted)',fontSize:'10px',textTransform:'uppercase',letterSpacing:'1px',marginBottom:'4px'}},'Geo'),h('div',{style:{color:'var(--accent-cyan)'}},profile.city?(profile.city+', '+(profile.country||'').slice(0,2).toUpperCase()):'—')),
+      h('div',{},h('div',{style:{color:'var(--text-muted)',fontSize:'10px',textTransform:'uppercase',letterSpacing:'1px',marginBottom:'4px'}},'Threat'),h('div',{},profile.ip ? h('span',{style:{color:(profile.risk||0)>60?'var(--accent-red)':(profile.risk||0)>30?'var(--accent-yellow)':'var(--accent-green)'}},((profile.risk||0)>60?'HIGH':(profile.risk||0)>30?'MEDIUM':'LOW')+' ('+(profile.risk||0)+')') : '—')),
+      h('div',{},h('div',{style:{color:'var(--text-muted)',fontSize:'10px',textTransform:'uppercase',letterSpacing:'1px',marginBottom:'4px'}},'Confidence'),h('div',{style:{color:'var(--accent-green)'}},profile.ip ? '85%' : '—'))
+    )
+  );
+}
+
+// ─── Page Views ───
+function PacketDecoderPage(props) {
+  const { packets, uploadResult } = props;
+  const [selectedPkt, setSelectedPkt] = useState(null);
+
+  const list = useMemo(() => {
+    if (uploadResult && uploadResult.packet_rows && uploadResult.packet_rows.length > 0) {
+      return uploadResult.packet_rows.map((p, i) => ({
+        id: i + 1,
+        time: p.timestamp || '',
+        src: p.source_ip + (p.source_port ? ':' + p.source_port : ''),
+        dst: p.destination_ip + (p.destination_port ? ':' + p.destination_port : ''),
+        proto: p.protocol || '',
+        len: p.length || 0,
+        info: p.decoded_summary || p.summary || '',
+        _raw: p
+      }));
+    }
+    if (packets && packets.length > 0) {
+      return packets.map((p, i) => ({
+        id: p.num || (i + 1),
+        time: p.time || '',
+        src: p.src || '',
+        dst: p.dst || '',
+        proto: p.proto || '',
+        len: p.len || 0,
+        info: p.info || '',
+        _raw: null
+      }));
+    }
+    return [];
+  }, [packets, uploadResult]);
+
+  useEffect(() => {
+    if (list.length > 0) setSelectedPkt(list[0]);
+  }, [list]);
+
+  const details = useMemo(() => {
+    if (!selectedPkt) return null;
+    if (selectedPkt._raw) {
+      const raw = selectedPkt._raw;
+      const layers = [
+        { name: 'Frame', fields: [ { k: 'Number', v: String(selectedPkt.id) }, { k: 'Time', v: selectedPkt.time }, { k: 'Size', v: String(selectedPkt.len) + ' bytes' } ] },
+        { name: 'Internet Protocol', fields: [ { k: 'Source IP', v: raw.source_ip || '' }, { k: 'Destination IP', v: raw.destination_ip || '' }, { k: 'Protocol', v: raw.protocol || '' } ] }
+      ];
+      if (raw.source_port || raw.destination_port) {
+        layers.push({ name: 'Transport Layer', fields: [ { k: 'Source Port', v: String(raw.source_port || '') }, { k: 'Destination Port', v: String(raw.destination_port || '') }, { k: 'TCP Flags', v: raw.tcp_flags || '—' } ] });
+      }
+      const df = raw.decoded_fields || {};
+      const fields = Object.entries(df).map(([k, v]) => ({ k, v: typeof v === 'object' ? JSON.stringify(v) : String(v) }));
+      if (fields.length > 0) {
+        layers.push({ name: 'Protocol Detail: ' + selectedPkt.proto, fields });
+      } else if (raw.payload_preview) {
+        layers.push({ name: 'Payload Raw Data', fields: [ { k: 'Format', v: raw.payload_kind || '' }, { k: 'Preview', v: raw.payload_preview || '' } ] });
+      }
+      return layers;
+    }
+    return getPacketDetails(selectedPkt);
+  }, [selectedPkt]);
+
+  return h('div', { style: { height: '100%', display: 'flex', flexDirection: 'column' } },
+    h('div', { style: { marginBottom: '20px' } },
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '4px' } }, h(IconCpu), h('h1', { style: { fontSize: '16px', fontWeight: 600, letterSpacing: '2px', textTransform: 'uppercase', fontFamily: 'var(--font-mono)' } }, 'Forensic Packet Decoder')),
+      h('div', { style: { fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '3px', marginLeft: '28px' } }, 'Deep packet inspection and protocol layer analysis')
+    ),
+    list.length === 0 ?
+      h('div', { className: 'glass-panel neon-border', style: { padding: '48px', textAlign: 'center', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' } }, 'No packets decoded. Start a capture session or upload a PCAP file to begin decoding.') :
+      h('div', { style: { flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '16px' } },
+        h('div', { className: 'glass-panel', style: { display: 'flex', flexDirection: 'column', overflow: 'hidden' } },
+          h('div', { className: 'section-title', style: { padding: '16px 16px 0 16px' } }, h('span', {}, 'Packet List'), h('span', { style: { fontSize: '10px', color: 'var(--text-muted)' } }, list.length + ' frames')),
+        h('div', { style: { flex: 1, overflow: 'auto', padding: '0 8px 8px 8px' } },
+          h('table', { style: { width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--font-mono)', fontSize: '11px' } },
+            h('thead', { style: { position: 'sticky', top: 0, background: 'var(--bg-card)' } }, h('tr', { style: { color: 'var(--text-muted)', textAlign: 'left' } },
+              h('th', { style: { padding: '8px 4px' } }, 'No'),
+              h('th', { style: { padding: '8px 4px' } }, 'Time'),
+              h('th', { style: { padding: '8px 4px' } }, 'Source'),
+              h('th', { style: { padding: '8px 4px' } }, 'Destination'),
+              h('th', { style: { padding: '8px 4px' } }, 'Proto'),
+              h('th', { style: { padding: '8px 4px' } }, 'Len'),
+              h('th', { style: { padding: '8px 4px' } }, 'Info')
+            )),
+            h('tbody', {}, list.map(function(p, i) {
+              return h('tr', { key: i, className: 'packet-row ' + (selectedPkt && selectedPkt.id === p.id ? 'selected' : ''), onClick: function() { setSelectedPkt(p); } },
+                h('td', { style: { padding: '6px 4px', color: 'var(--text-muted)' } }, p.id),
+                h('td', { style: { padding: '6px 4px', color: 'var(--text-muted)' } }, p.time),
+                h('td', { style: { padding: '6px 4px' } }, p.src),
+                h('td', { style: { padding: '6px 4px' } }, p.dst),
+                h('td', { style: { padding: '6px 4px' } }, p.proto),
+                h('td', { style: { padding: '6px 4px' } }, p.len),
+                h('td', { style: { padding: '6px 4px', color: 'var(--text-secondary)' } }, p.info)
+              );
+            }))
+          )
+        )
+      ),
+      h('div', { className: 'glass-panel neon-border', style: { display: 'flex', flexDirection: 'column', overflow: 'hidden' } },
+        h('div', { className: 'section-title', style: { padding: '16px 16px 0 16px' } }, h('span', {}, 'Protocol Layers')),
+        h('div', { style: { flex: 1, overflow: 'auto', padding: '12px' } },
+          details ? details.map(function(layer, i) {
+            return h('div', { key: i, className: 'decoder-node active', style: { marginBottom: '12px' } },
+              h('div', { style: { fontSize: '12px', fontWeight: 600, color: 'var(--accent-cyan)', marginBottom: '6px', fontFamily: 'var(--font-mono)' } }, layer.name),
+              h('div', {}, layer.fields.map(function(f, j) {
+                return h('div', { key: j, className: 'decoder-field' },
+                  h('span', { style: { color: 'var(--text-muted)' } }, f.k),
+                  h('span', { style: { color: 'var(--text-primary)', wordBreak: 'break-all', maxWidth: '60%', textAlign: 'right' } }, f.v)
+                );
+              }))
+            );
+          }) : h('div', { style: { color: 'var(--text-muted)' } }, 'Select a packet to decode')
+        )
+      )
+    )
+  );
+}
+
+function UploadPage(props) {
+  const { onUploadResult } = props;
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(null);
+  const ref = useRef(null);
+
+  async function handleFiles(files) {
+    if (!files || !files.length) return;
+    setBusy(true); setDone(null);
+    try {
+      const fd = new FormData();
+      for (const f of files) fd.append('files', f);
+      const k = getKey();
+      const r = await fetch(API_BASE + '/api/upload', { method: 'POST', headers: k ? { 'Authorization': 'Bearer ' + k } : {}, body: fd });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      setDone(d);
+      onUploadResult(d);
+      toast('PCAP parsed and loaded successfully!', 'success');
+    } catch (e) {
+      toast('Upload failed: ' + e.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return h('div', { style: { height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' } },
+    h('div', { className: 'glass-panel neon-border', style: { padding: '48px', textAlign: 'center', maxWidth: '700px', width: '100%', borderStyle: 'dashed', background: 'rgba(6,182,212,0.02)' },
+      onDragOver: e => e.preventDefault(), onDrop: e => { e.preventDefault(); handleFiles(e.dataTransfer.files); } },
+      h('div', { style: { fontSize: '64px', color: 'var(--accent-cyan)', marginBottom: '24px', display: 'flex', justifycontent: 'center' } }, h(IconUpload)),
+      h('h2', { style: { marginBottom: '32px', fontFamily: 'var(--font-mono)', letterSpacing: '1px', fontSize: '18px', color: 'var(--accent-cyan)' } }, 'Upload PCAP or Network logs for Forensics'),
+      h('div', { style: { display: 'flex', gap: '8px', justifyContent: 'center', marginBottom: '32px', flexWrap: 'wrap' } },
+        ['PCAP', 'CSV', 'Firewall Logs', 'Telecom CDRs'].map(f => h('span', { className: 'badge badge-clean', style: { fontSize: '11px', padding: '4px 10px' } }, f))
+      ),
+      busy ? h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px', justifyContent: 'center', color: 'var(--accent-cyan)', fontFamily: 'var(--font-mono)' } }, h('div', { className: 'spinner' }), 'Analyzing logs…') :
+      h('button', { className: 'btn-cyber', style: { margin: '0 auto' }, onClick: () => ref.current.click() }, h(IconUpload), ' Select Files'),
+      h('input', { ref, type: 'file', multiple: true, style: { display: 'none' }, onChange: e => handleFiles(e.target.files) }),
+      done && h('div', { style: { marginTop: '24px', padding: '12px', background: 'rgba(16,185,129,0.05)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: '6px', textAlign: 'left' } },
+        h('div', { style: { fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--accent-green)' } }, '✓ Complete: ' + done.id),
+        h('div', { style: { fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' } }, 'Parsed ' + (done.summary?.total_packets || 0) + ' packets. Switch to Packet Decoder or VoIP Analyzer to view.')
+      )
+    )
+  );
+}
+
+function InvestigationsPage(props){
+  const { investigations, onView, onRefresh } = props;
+  const [q, setQ] = useState('');
+  const filtered = useMemo(() => {
+    if (!q) return investigations;
+    const l = q.toLowerCase();
+    return investigations.filter(i => (i.id || '').toLowerCase().includes(l) || (i.filename || '').toLowerCase().includes(l));
+  }, [investigations, q]);
+
+  return h('div',{},
+    h('div',{style:{marginBottom:'20px'}},
+      h('div',{style:{display:'flex',alignItems:'center',gap:'12px',marginBottom:'4px'}},h(IconSearch),h('h1',{style:{fontSize:'16px',fontWeight:600,letterSpacing:'2px',textTransform:'uppercase',fontFamily:'var(--font-mono)'}},'Investigations History')),
+      h('div',{style:{fontSize:'11px',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'3px',marginLeft:'28px'}},'Persisted forensic sessions')
+    ),
+    h('div',{className:'glass-panel',style:{padding:'16px'}},
+      h('div',{style:{display:'flex',gap:'12px',marginBottom:'16px'}},
+        h('input',{className:'input-cyber',placeholder:'Search investigations...',style:{flex:1},value: q, onChange: e => setQ(e.target.value)}),
+        h('button',{className:'btn-cyber-secondary', onClick: onRefresh},h(IconRefresh),' Refresh')
+      ),
+      investigations.length === 0 ? h('div', { style: { color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: '12px', textAlign: 'center', padding: '40px' } }, 'No saved sessions found.') :
+      h('table',{style:{width:'100%',borderCollapse:'collapse',fontFamily:'var(--font-mono)',fontSize:'12px'}},
+        h('thead',{},h('tr',{style:{borderBottom:'1px solid var(--border-color)',color:'var(--text-muted)',textAlign:'left'}},
+          h('th',{style:{padding:'10px 8px'}},'ID'),h('th',{style:{padding:'10px 8px'}},'Date'),h('th',{style:{padding:'10px 8px'}},'Time'),
+          h('th',{style:{padding:'10px 8px'}},'Duration'),h('th',{style:{padding:'10px 8px'}},'Protocol'),h('th',{style:{padding:'10px 8px'}},'Remote IP'),
+          h('th',{style:{padding:'10px 8px'}},'Geo'),h('th',{style:{padding:'10px 8px'}},'Threat'),h('th',{style:{padding:'10px 8px'}},'Confidence'),
+          h('th',{style:{padding:'10px 8px'}},'Packets'),h('th',{style:{padding:'10px 8px'}},'Status'),h('th',{style:{padding:'10px 8px'}},'Actions')
+        )),
+        h('tbody',{},filtered.map(function(inv,i){return h('tr',{key:inv.id,className:'table-row-hover '+(i%2===1?'table-row-alt':''),style:{borderBottom:'1px solid var(--border-color)'}},
+          h('td',{style:{padding:'10px 8px',color:'var(--accent-cyan)'}},(inv.id || '').slice(0, 8)),
+          h('td',{style:{padding:'10px 8px'}},inv.created_at ? inv.created_at.split('T')[0] : '—'),
+          h('td',{style:{padding:'10px 8px',color:'var(--text-muted)'}},inv.created_at ? inv.created_at.split('T')[1]?.slice(0, 8) : '—'),
+          h('td',{style:{padding:'10px 8px'}},inv.summary?.duration || '0:00'),
+          h('td',{style:{padding:'10px 8px'}},h('span',{style:{padding:'2px 6px',borderRadius:'3px',fontSize:'10px',background:'rgba(6,182,212,0.15)',color:'var(--accent-cyan)',border:'1px solid rgba(6,182,212,0.3)'}},inv.summary?.primary_protocol || 'SRTP')),
+          h('td',{style:{padding:'10px 8px'}},inv.summary?.remote_ip || '—'),
+          h('td',{style:{padding:'10px 8px',color:'var(--accent-cyan)'}},inv.summary?.remote_geo || '—'),
+          h('td',{style:{padding:'10px 8px'}},h('span',{className:'badge '+((inv.summary?.threat_score || 0)>60?'badge-high':(inv.summary?.threat_score || 0)>30?'badge-medium':'badge-low')},inv.summary?.threat_score || 0)),
+          h('td',{style:{padding:'10px 8px',color:'var(--accent-green)'}},(inv.summary?.confidence || 85)+'%'),
+          h('td',{style:{padding:'10px 8px'}},inv.summary?.total_packets || 0),
+          h('td',{style:{padding:'10px 8px'}},h('span',{className:'badge badge-clean'},'Completed')),
+          h('td',{style:{padding:'10px 8px'}},h('button',{className:'btn-cyber-secondary',style:{padding:'4px 8px',fontSize:'11px'}, onClick: () => onView(inv.id)},h(IconEye),' View'))
+        );}))
+      )
+    )
+  );
+}
+
+function GeoIPPage(props) {
+  const { profile, activeIPs, selectedIP, setSelectedIP } = props;
+  return h('div', { style: { height: 'calc(100% - 0px)', display: 'flex', flexDirection: 'column' } },
+    h('div', { style: { marginBottom: '20px' } },
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '4px' } }, h(IconNetwork), h('h1', { style: { fontSize: '16px', fontWeight: 600, letterSpacing: '2px', textTransform: 'uppercase', fontFamily: 'var(--font-mono)' } }, 'ASN Routing & DNS Mapper')),
+      h('div', { style: { fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '3px', marginLeft: '28px' } }, 'Real-time GeoIP intelligence and ASN routing resolution')
+    ),
+    h('div', { style: { flex: 1, minHeight: 0 } },
+      h(ASNMapper, { profile: profile, activeIPs: activeIPs, selectedIP: selectedIP, setSelectedIP: setSelectedIP })
+    )
+  );
+}
+
+function ReportsPage(props){
+  const { investigations, currentInvId } = props;
+  const [busy, setBusy] = useState('');
+
+  async function downloadReport(fmt) {
+    if (!currentInvId || currentInvId === '—') {
+      toast('No active investigation. Start capture first or save session.', 'error');
+      return;
+    }
+    setBusy(fmt);
+    try {
+      const blob = await apiBlob('/api/capture/export?format=' + fmt);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = 'report_' + currentInvId + '.' + fmt; a.click();
+      toast('Export successful: report_' + currentInvId + '.' + fmt, 'success');
+    } catch (e) {
+      toast('Download failed: ' + e.message, 'error');
+    } finally {
+      setBusy('');
+    }
+  }
+
+  return h('div',{},
+    h('div',{style:{marginBottom:'20px'}},
+      h('div',{style:{display:'flex',alignItems:'center',gap:'12px',marginBottom:'4px'}},h(IconFileText),h('h1',{style:{fontSize:'16px',fontWeight:600,letterSpacing:'2px',textTransform:'uppercase',fontFamily:'var(--font-mono)'}},'Reports')),
+      h('div',{style:{fontSize:'11px',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'3px',marginLeft:'28px'}},'Export and download forensic reports')
+    ),
+    h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'16px',marginBottom:'16px'}},
+      h('div',{className:'glass-panel',style:{padding:'24px',textAlign:'center'}},
+        h('div',{style:{fontSize:'48px',color:'var(--accent-cyan)',marginBottom:'12px'}},h(IconFile)),
+        h('div',{style:{fontSize:'14px',fontWeight:600,marginBottom:'8px'}},'Generate PDF Report'),
+        h('div',{style:{fontSize:'12px',color:'var(--text-muted)',marginBottom:'16px'}},'Full forensic analysis with all intelligence'),
+        h('button',{className:'btn-cyber', onClick: () => downloadReport('pdf'), disabled: busy === 'pdf'}, busy === 'pdf' ? h('div', { className: 'spinner' }) : h(IconDownload),' Generate PDF')
+      ),
+      h('div',{className:'glass-panel',style:{padding:'24px',textAlign:'center'}},
+        h('div',{style:{fontSize:'48px',color:'var(--accent-green)',marginBottom:'12px'}},h(IconDatabase)),
+        h('div',{style:{fontSize:'14px',fontWeight:600,marginBottom:'8px'}},'Export JSON Data'),
+        h('div',{style:{fontSize:'12px',color:'var(--text-muted)',marginBottom:'16px'}},'Structured data for integration'),
+        h('button',{className:'btn-cyber', onClick: () => downloadReport('json'), disabled: busy === 'json'}, busy === 'json' ? h('div', { className: 'spinner' }) : h(IconDownload),' Export JSON')
+      )
+    )
+  );
+}
+
+function SettingsPage(props){
+  const { apiKey, onSave, wsConnected } = props;
+  const [k, setK] = useState('');
+  const [saved, setSaved] = useState(false);
+  const [editing, setEditing] = useState(!apiKey);
+  const [showStatusDetails, setShowStatusDetails] = useState(false);
+
+  useEffect(() => {
+    if (!apiKey) setEditing(true);
+  }, [apiKey]);
+
+  function save() {
+    onSave(k.trim());
+    setSaved(true);
+    setEditing(false);
+    setK('');
+    toast('API Key saved', 'success');
+    setTimeout(() => setSaved(false), 2000);
+  }
+
+  return h('div',{},
+    h('div',{style:{marginBottom:'20px'}},
+      h('div',{style:{display:'flex',alignItems:'center',gap:'12px',marginBottom:'4px'}},h(IconSettings),h('h1',{style:{fontSize:'16px',fontWeight:600,letterSpacing:'2px',textTransform:'uppercase',fontFamily:'var(--font-mono)'}},'Settings')),
+      h('div',{style:{fontSize:'11px',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'3px',marginLeft:'28px'}},'Platform configuration and preferences')
+    ),
+    h('div',{style:{maxWidth:'600px'}},
+      h('div',{className:'glass-panel',style:{padding:'24px'}},
+        h('div',{className:'section-title'},h('span',{},h(IconKey),' API Authentication')),
+        h('div',{style:{display:'flex',flexDirection:'column',gap:'12px'}},
+          h('div',{style:{fontSize:'12px',color:'var(--text-muted)',lineHeight:1.7,fontFamily:'var(--font-mono)'}},'Enter the API key printed in the server startup logs (CYBERDEEP BOOTSTRAP). It authorizes live capture commands and WebSocket connections.'),
+          editing ?
+            h('div',{style:{display:'flex',gap:'8px'}},
+              h('input',{className:'input-cyber',type:'password',placeholder: apiKey ? 'Enter new API key…' : 'Enter 40-char hex API key…',value:k,onChange:e=>setK(e.target.value),onKeyDown:e=>e.key==='Enter'&&save()}),
+              h('button',{className:'btn-cyber',style:{flexShrink:0},onClick:save},saved?'✓ Saved':'Save Key'),
+              apiKey && h('button',{className:'btn-cyber-secondary',style:{flexShrink:0},onClick:()=>setEditing(false)},'Cancel')
+            ) :
+            h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',background:'rgba(255,255,255,0.03)',padding:'8px 12px',borderRadius:'4px',border:'1px dashed var(--border-color)'}},
+              h('span',{style:{fontFamily:'var(--font-mono)',color:'var(--accent-green)',fontSize:'13px',letterSpacing:'3px'}},'••••••••••••••••••••••••••••••••'),
+              h('button',{className:'btn-cyber-secondary',style:{padding:'2px 8px',fontSize:'11px'},onClick:()=>setEditing(true)},'✏️ Change Key')
+            ),
+          apiKey && !editing && h('div',{style:{fontFamily:'var(--font-mono)',fontSize:'11px',color:'var(--accent-green)'}},'✓ Key configured and secured')
+        )
+      )
+    )
+  );
+}
+
+function VoIPAnalyzerPage(props){
+  const { sessions, uploadResult, packets } = props;
+  const [q, setQ] = useState('');
+  const [selectedId, setSelectedId] = useState(null);
+
+  const list = useMemo(function() {
+    const src = (uploadResult && uploadResult.correlation && uploadResult.correlation.voip_sessions) || 
+                (uploadResult && uploadResult.voip_sessions) || 
+                sessions || [];
+    if (!q) return src;
+    const lq = q.toLowerCase();
+    return src.filter(function(s) {
+      return (s.caller||'').toLowerCase().includes(lq) || 
+             (s.callee||'').toLowerCase().includes(lq) || 
+             (s.session_id||s.id||s.call_id||'').toLowerCase().includes(lq);
+    });
+  }, [sessions, uploadResult, q]);
+
+  // Select first session by default
+  useEffect(() => {
+    if (list.length > 0 && !selectedId) {
+      const first = list[0];
+      setSelectedId(first.session_id || first.id || first.call_id);
+    }
+  }, [list, selectedId]);
+
+  const selectedSession = useMemo(() => {
+    if (!selectedId) return list[0] || null;
+    return list.find(s => (s.session_id || s.id || s.call_id) === selectedId) || list[0] || null;
+  }, [list, selectedId]);
+
+  function getMosBadge(mos){
+    const val = parseFloat(mos) || 0;
+    if(val>=4.0)return h('span',{className:'badge badge-low'},'EXCELLENT ('+val.toFixed(1)+')');
+    if(val>=3.0)return h('span',{className:'badge badge-medium'},'FAIR ('+val.toFixed(1)+')');
+    return h('span',{className:'badge badge-high'},'POOR ('+val.toFixed(1)+')');
+  }
+
+  // List view render
+  const listRows = list.map(function(s, i) {
+    const sid = s.session_id || s.call_id || s.id || ('sess-' + i);
+    const caller = s.caller || s.source_ip || '';
+    const callee = s.callee || s.destination_ip || '';
+    const protocol = s.protocol || s.media_path || 'VoIP';
+    const mos = parseFloat(s.mos_score || s.mos || 0);
+    const isRelayed = s.connection_type === 'RELAY' || protocol === 'STUN' || protocol === 'TURN' || (s.status && (s.status.indexOf('RELAY') >= 0 || s.status.indexOf('SERVER') >= 0));
+    const typeStr = isRelayed ? 'RELAY' : 'P2P';
+    
+    let timeStr = '--:--:--';
+    if (s.start_time || s.timestamp) {
+      timeStr = formatFullLocalTime(s.start_time || s.timestamp);
+    }
+    const isSelected = selectedSession && (selectedSession.session_id || selectedSession.id || selectedSession.call_id) === (s.session_id || s.id || s.call_id);
+
+    return h('tr',{
+      key: i,
+      className:'table-row-hover '+(i%2===1?'table-row-alt':''),
+      onClick: function() { setSelectedId(s.session_id || s.id || s.call_id); },
+      style:{
+        borderBottom:'1px solid var(--border-color)',
+        cursor: 'pointer',
+        background: isSelected ? 'rgba(6, 182, 212, 0.15)' : 'transparent',
+        color: isSelected ? 'var(--accent-cyan)' : 'var(--text-primary)'
+      }
+    },
+      h('td',{style:{padding:'10px 8px',fontWeight:600,fontFamily:'var(--font-mono)',fontSize:'11px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'},title:sid},sid.slice(0, 8) + '...'),
+      h('td',{style:{padding:'10px 8px',color:'var(--text-secondary)'}},timeStr.split(' T-')[1] || timeStr),
+      h('td',{style:{padding:'10px 8px',fontSize:'11px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'},title:caller},caller),
+      h('td',{style:{padding:'10px 8px',fontSize:'11px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'},title:callee},callee),
+      h('td',{style:{padding:'10px 8px'}},h('span',{className:'badge '+(typeStr==='RELAY'?'badge-high':'badge-low'),style:{fontSize:'10px',padding:'2px 6px'}},typeStr)),
+      h('td',{style:{padding:'10px 8px'}},protocol),
+      h('td',{style:{padding:'10px 8px'}},getMosBadge(mos))
+    );
+  });
+
+  return h('div',{},
+    h('div',{style:{marginBottom:'20px'}},
+      h('div',{style:{display:'flex',alignItems:'center',gap:'12px',marginBottom:'4px'}},h(IconPhoneVoip),h('h1',{style:{fontSize:'16px',fontWeight:600,letterSpacing:'2px',textTransform:'uppercase',fontFamily:'var(--font-mono)'}},'VoIP Analyzer')),
+      h('div',{style:{fontSize:'11px',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'3px',marginLeft:'28px'}},'Reconstructs phone sessions, audio streams, jitter logs, and MOS quality scores')
+    ),
+    h('div',{style:{display:'grid',gridTemplateColumns:'1.1fr 1.9fr',gap:'16px',height:'calc(100vh - 190px)',overflow:'hidden'}},
+      // Left Pane: Session List
+      h('div',{className:'glass-panel',style:{padding:'16px',display:'flex',flexDirection:'column',overflow:'hidden'}},
+        h('div',{style:{display:'flex',gap:'12px',marginBottom:'12px'}},
+          h('input',{className:'input-cyber',placeholder:'Search sessions...',style:{flex:1},value:q,onChange:e=>setQ(e.target.value)}),
+          uploadResult && h('span', { style: { color: 'var(--accent-cyan)', fontFamily: 'var(--font-mono)', fontSize: '11px', alignSelf: 'center', padding: '0 8px' } }, 'PCAP')
+        ),
+        h('div',{style:{flex:1,overflowY:'auto'}},
+          list.length === 0 ? h('div', { style: { color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: '12px', textAlign: 'center', padding: '40px' } }, 'No sessions detected.') :
+          h('table',{style:{width:'100%',borderCollapse:'collapse',fontFamily:'var(--font-mono)',fontSize:'12px',tableLayout:'fixed'}},
+            h('thead',{},h('tr',{style:{borderBottom:'1px solid var(--border-color)',color:'var(--text-muted)',textAlign:'left'}},
+              h('th',{style:{padding:'8px',width:'18%'}},'Call-ID'),
+              h('th',{style:{padding:'8px',width:'18%'}},'Time'),
+              h('th',{style:{padding:'8px',width:'22%'}},'Caller'),
+              h('th',{style:{padding:'8px',width:'22%'}},'Callee'),
+              h('th',{style:{padding:'8px',width:'10%'}},'Type'),
+              h('th',{style:{padding:'8px',width:'10%'}},'Proto'),
+              h('th',{style:{padding:'8px',width:'20%'}},'MOS Score')
+            )),
+            h('tbody',{},listRows)
+          )
+        )
+      ),
+
+      // Right Pane: Forensic Analyzer Panel
+      h('div',{className:'glass-panel neon-border',style:{padding:'16px',display:'flex',flexDirection:'column',overflowY:'auto'}},
+        !selectedSession ? h('div',{style:{color:'var(--text-muted)',textAlign:'center',padding:'40px',fontFamily:'var(--font-mono)'}},'Select a VoIP session from the list to begin detailed tracking analysis.') : [
+          // Header info
+          h('div',{key:'hdr',style:{borderBottom:'1px solid var(--border-color)',paddingBottom:'12px',marginBottom:'12px'}},
+            h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'6px'}},
+              h('span',{style:{fontSize:'10px',color:'var(--text-muted)',fontFamily:'var(--font-mono)',textTransform:'uppercase',letterSpacing:'1.5px'}},'Active Session Forensics'),
+              getMosBadge(selectedSession.mos_score || selectedSession.mos || 0)
+            ),
+            (function() {
+              const rawId = selectedSession.session_id || selectedSession.id || selectedSession.call_id || '';
+              if (rawId.includes('_')) {
+                const parts = rawId.split('_');
+                if (parts.length >= 4) {
+                  const src = parts[0];
+                  const dst = parts[1];
+                  const sport = parts[2];
+                  const dport = parts[3];
+                  const proto = parts[4] || 'VoIP';
+                  const formatIP = function(ip){ return ip.includes(':') ? '[' + ip + ']' : ip; };
+                  
+                  return h('div', {style:{display:'flex', flexDirection:'column', gap:'4px'}},
+                    h('div', {style:{display:'flex', alignItems:'center', gap:'8px', flexWrap:'wrap', fontSize:'13px', fontWeight:700, fontFamily:'var(--font-mono)', marginTop:'4px'}},
+                      h('span', {style:{color:'var(--accent-cyan)'}}, formatIP(src) + ':' + sport),
+                      h('span', {style:{color:'var(--text-muted)'}}, '➔'),
+                      h('span', {style:{color:'var(--accent-purple)'}}, formatIP(dst) + ':' + dport),
+                      h('span', {className:'badge badge-clean', style:{fontSize:'9px', marginLeft:'4px'}}, proto)
+                    ),
+                    h('div', {style:{fontSize:'10px', color:'var(--text-muted)', fontFamily:'var(--font-mono)', wordBreak:'break-all', marginTop:'2px'}}, 'RAW ID: ' + rawId)
+                  );
+                }
+              }
+              return h('div',{style:{fontSize:'15px',fontWeight:700,fontFamily:'var(--font-mono)',color:'var(--accent-cyan)',wordBreak:'break-all'},title:rawId},rawId);
+            })(),
+            h('div',{style:{fontSize:'12px',color:'var(--text-secondary)',marginTop:'6px',fontFamily:'var(--font-mono)'}},
+              'Endpoint: ' + (selectedSession.caller || 'Unknown') + ' ⟷ ' + (selectedSession.callee || 'Unknown')
+            )
+          ),
+
+          // Overview stats grid
+          h('div',{key:'stats',style:{display:'grid',gridTemplateColumns:'repeat(3, 1fr)',gap:'12px',marginBottom:'16px'}},
+            h('div',{className:'glass-panel',style:{padding:'10px',background:'rgba(255,255,255,0.01)'}},
+              h('div',{style:{fontSize:'9px',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'1px'}},'Jitter'),
+              h('div',{style:{fontFamily:'var(--font-mono)',fontSize:'14px',fontWeight:700,color:'var(--accent-cyan)',marginTop:'4px'}},(selectedSession.jitter_ms || 0).toFixed(2) + ' ms')
+            ),
+            h('div',{className:'glass-panel',style:{padding:'10px',background:'rgba(255,255,255,0.01)'}},
+              h('div',{style:{fontSize:'9px',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'1px'}},'Packet Loss'),
+              h('div',{style:{fontFamily:'var(--font-mono)',fontSize:'14px',fontWeight:700,color:'var(--accent-yellow)',marginTop:'4px'}},((selectedSession.loss !== undefined ? selectedSession.loss : 0.0)).toFixed(2) + '%')
+            ),
+            h('div',{className:'glass-panel',style:{padding:'10px',background:'rgba(255,255,255,0.01)'}},
+              h('div',{style:{fontSize:'9px',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'1px'}},'Attribution Confidence'),
+              h('div',{style:{fontFamily:'var(--font-mono)',fontSize:'14px',fontWeight:700,color:'var(--accent-green)',marginTop:'4px'}},(selectedSession.attribution_confidence || 85) + '%')
+            )
+          ),
+
+          // Attribution summary row details
+          h('div',{key:'attr',style:{marginBottom:'16px'}},
+            h('div',{className:'section-title'},'Participant Endpoint Attribution'),
+            h('div',{className:'intel-row'},h('span',{className:'intel-label'},'Observed Private IP'),h('span',{className:'intel-value highlight'},selectedSession.participant_private_ip || 'Not Observable')),
+            h('div',{className:'intel-row'},h('span',{className:'intel-label'},'Observed Public IP'),h('span',{className:'intel-value highlight'},selectedSession.participant_public_ip || 'Not Observable')),
+            h('div',{className:'intel-row'},h('span',{className:'intel-label'},'ISP / Carrier'),h('span',{className:'intel-value'},selectedSession.participant_isp || 'Not Observable')),
+            h('div',{className:'intel-row'},h('span',{className:'intel-label'},'Geo Region'),h('span',{className:'intel-value'},(selectedSession.participant_city ? selectedSession.participant_city + ', ' : '') + (selectedSession.participant_country || 'Not Observable'))),
+            selectedSession.attribution_reason && h('div',{className:'intel-row'},h('span',{className:'intel-label'},'Attribution Method'),h('span',{className:'intel-value warning'},selectedSession.attribution_reason))
+          ),
+
+          // ICE State Section
+          h('div',{key:'ice',style:{marginBottom:'16px'}},
+            h('div',{className:'section-title'},'ICE Nomination & State Machine'),
+            h('div',{className:'intel-row'},h('span',{className:'intel-label'},'ICE Session State'),h('span',{className:'intel-value highlight',style:{color:selectedSession.ice_state==='COMPLETED'||selectedSession.ice_state==='CONNECTED'?'var(--accent-green)':selectedSession.ice_state==='FAILED'?'var(--accent-red)':'var(--accent-yellow)'}},selectedSession.ice_state || 'GATHERING')),
+            selectedSession.nominated_pair ? [
+              h('div',{key:'np-local',className:'intel-row'},h('span',{className:'intel-label'},'Nominated Local IP'),h('span',{className:'intel-value'},selectedSession.nominated_pair.local_ip + ':' + selectedSession.nominated_pair.local_port)),
+              h('div',{key:'np-remote',className:'intel-row'},h('span',{className:'intel-label'},'Nominated Remote IP'),h('span',{className:'intel-value'},selectedSession.nominated_pair.remote_ip + ':' + selectedSession.nominated_pair.remote_port))
+            ] : h('div',{key:'np-warn',style:{fontFamily:'var(--font-mono)',fontSize:'11px',color:'var(--text-muted)',padding:'6px 0'}},'⚠️ No nominated candidate pairs confirmed yet.')
+          ),
+
+          // TURN Allocations Section
+          h('div',{key:'turn',style:{marginBottom:'16px'}},
+            h('div',{className:'section-title'},'TURN Relayed Allocations'),
+            (!selectedSession.turn_allocations || selectedSession.turn_allocations.length === 0) ? 
+              h('div',{style:{fontFamily:'var(--font-mono)',fontSize:'11px',color:'var(--text-muted)',padding:'6px 0'}},'No active TURN allocations established.') :
+              selectedSession.turn_allocations.map((a, idx) => h('div',{key:idx,style:{borderBottom:'1px solid var(--border-color)',paddingBottom:'8px',marginBottom:'8px'}},
+                h('div',{className:'intel-row'},h('span',{className:'intel-label'},'TURN Relay Address'),h('span',{className:'intel-value highlight'},a.relay)),
+                h('div',{className:'intel-row'},h('span',{className:'intel-label'},'Client Nat Address'),h('span',{className:'intel-value'},a.client)),
+                h('div',{className:'intel-row'},h('span',{className:'intel-label'},'Allocation Lifetime'),h('span',{className:'intel-value'},a.lifetime + 's')),
+                a.channels && Object.keys(a.channels).length > 0 && [
+                  h('div',{key:'ch-title',style:{fontSize:'10px',color:'var(--text-muted)',fontFamily:'var(--font-mono)',marginTop:'6px',textTransform:'uppercase',letterSpacing:'1.5px'}},'Active Channel Bindings'),
+                  h('div',{key:'ch-grid',style:{display:'grid',gridTemplateColumns:'80px 1fr',gap:'4px 12px',fontFamily:'var(--font-mono)',fontSize:'11px',marginTop:'4px',padding:'6px 10px',background:'rgba(255,255,255,0.01)',border:'1px dashed var(--border-color)',borderRadius:'4px'}},
+                    Object.entries(a.channels).flatMap(([ch, peer]) => [
+                      h('span',{key:'c-'+ch,style:{color:'var(--accent-cyan)'}},'ch' + ch),
+                      h('span',{key:'p-'+ch,style:{color:'var(--text-secondary)'}},peer)
+                    ])
+                  )
+                ]
+              ))
+          ),
+
+          // Extracted IP Categorization Section
+          h('div',{key:'ext'},
+            h('div',{className:'section-title'},'Extracted Forensic IP Categories'),
+            (!selectedSession.extracted_ips || Object.keys(selectedSession.extracted_ips).length === 0) ?
+              h('div',{style:{fontFamily:'var(--font-mono)',fontSize:'11px',color:'var(--text-muted)',padding:'6px 0'}},'No de-duplicated IPs registered yet.') :
+              h('table',{style:{width:'100%',borderCollapse:'collapse',fontFamily:'var(--font-mono)',fontSize:'11px',marginTop:'6px'}},
+                h('thead',{},h('tr',{style:{borderBottom:'1px solid var(--border-color)',color:'var(--text-muted)',textAlign:'left'}},
+                  h('th',{style:{padding:'6px 4px',width:'30%'}},'Category'),
+                  h('th',{style:{padding:'6px 4px',width:'70%'}},'First-Seen Resolved IP Address')
+                )),
+                h('tbody',{},Object.entries(selectedSession.extracted_ips).map(([cat, ip], idx) => h('tr',{key:idx,style:{borderBottom:'1px solid var(--border-color)'}},
+                  h('td',{style:{padding:'6px 4px',color:'var(--text-muted)'}},cat),
+                  h('td',{style:{padding:'6px 4px',color:'var(--accent-cyan)',fontWeight:600}},ip)
+                )))
+              )
+          )
+        ]
+      )
+    )
+  );
+}
+
+function formatFullLocalTime(tVal) {
+  if (!tVal) return '--:--:--';
+  let d = null;
+  if (typeof tVal === 'number') {
+    d = new Date(tVal * 1000);
+  } else {
+    d = new Date(tVal);
+    if (isNaN(d.getTime())) {
+      const m = String(tVal).match(/^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2}:\d{2})/);
+      if (m) {
+        return m[1] + ' T-' + m[2];
+      }
+      return String(tVal);
+    }
+  }
+  const pad = function(n) { return n < 10 ? '0' + n : n; };
+  const dateStr = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  const timeStr = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+  return dateStr + ' T-' + timeStr;
+}
+
+function formatLocalTime(tSeconds) {
+  const d = tSeconds ? new Date(tSeconds * 1000) : new Date();
+  const pad = function(n) { return n < 10 ? '0' + n : n; };
+  return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+}
+
+// ─── Main App ───
+function App(){
+  const [activeTab,setActiveTab]=useState('live');
+  const [isCapturing,setIsCapturing]=useState(false);
+  const [elapsed,setElapsed]=useState('00:00');
+  const [logs,setLogs]=useState([]);
+  const [milestones,setMilestones]=useState([]);
+  const [packets,setPackets]=useState([]);
+  const [profile,setProfile]=useState({}); 
+  const [stats,setStats]=useState({captured:0,analyzed:0,protocols:0,sessions:0,ips:0,stun:0,turn:0,ice:0,srtp:0,rtcp:0,sip:0,sdp:0,dns:0,pps:0,bandwidth:0,latency:0,jitter:0,loss:0,rtt:0,duration:'0:00',startTime:'--:--:--'});
+  const [investigationId,setInvestigationId]=useState('—');
+  
+  const [interfaces,setInterfaces]=useState([]);
+  const [selectedIface,setSelectedIface]=useState('');
+  const [bpfFilter,setBpfFilter]=useState('udp or (tcp and (port 5060 or port 5061 or port 443 or port 53 or port 5353 or port 3478))');
+  const [apiKey,setApiKeyState]=useState(getKey());
+  const [wsConnected,setWsConnected]=useState(false);
+  const [investigations,setInvestigations]=useState([]);
+  const [voipSessions,setVoipSessions]=useState([]);
+  const [uploadResult,setUploadResult]=useState(null);
+  const [activeIPs,setActiveIPs]=useState([]);
+  const [selectedIP,setSelectedIP]=useState(null);
+
+  const displayedActiveIPs = useMemo(function() {
+    if (uploadResult && uploadResult.rows && uploadResult.rows.length > 0) {
+      return uploadResult.rows.map(function(r) {
+        return {
+          ip: r.ip || r.destination_ip || '',
+          asn: r.asn || 'AS0',
+          org: r.isp || r.org || 'Local Lookup',
+          city: r.city || '',
+          country: r.country || '',
+          state: r.state || r.region || '',
+          lat: r.lat || r.latitude || 0,
+          lon: r.lon || r.longitude || 0,
+          isp: r.isp || ''
+        };
+      });
+    }
+    return activeIPs;
+  }, [activeIPs, uploadResult]);
+
+  const activeProfile = useMemo(function() {
+    if (selectedIP) {
+      const found = displayedActiveIPs.find(function(x){ return x.ip === selectedIP; });
+      if (found) return found;
+      if (profile && profile.ip === selectedIP) return profile;
+    }
+    if (uploadResult && uploadResult.summary && uploadResult.summary.remote_ip) {
+      const r = uploadResult.summary;
+      return {
+        ip: r.remote_ip,
+        city: r.remote_city || '',
+        country: r.remote_country || '',
+        state: r.remote_state || r.remote_region || '',
+        lat: r.remote_lat || r.latitude || 0,
+        lon: r.remote_lon || r.longitude || 0,
+        asn: r.remote_asn || '',
+        isp: r.remote_isp || '',
+        org: r.remote_isp || '',
+        risk: r.threat_score || 0
+      };
+    }
+    return profile;
+  }, [selectedIP, displayedActiveIPs, profile, uploadResult]);
+
+  const displayedPackets = useMemo(function() {
+    if (uploadResult && uploadResult.packet_rows && uploadResult.packet_rows.length > 0) {
+      return uploadResult.packet_rows.map(function(p, i) {
+        return {
+          num: p.num || p.packet_index || (i + 1),
+          time: p.time || p.timestamp || '',
+          proto: (p.protocol || p.proto || '').toUpperCase(),
+          src: p.src || ((p.source_ip || '') + (p.source_port ? ':' + p.source_port : '')),
+          dst: p.dst || ((p.destination_ip || '') + (p.destination_port ? ':' + p.destination_port : '')),
+          len: p.len || p.length || 0,
+          info: p.info || p.summary || '',
+          raw: p
+        };
+      });
+    }
+    return packets;
+  }, [packets, uploadResult]);
+
+  const displayedStats = useMemo(function() {
+    if (uploadResult) {
+      const p = uploadResult.packet_rows || [];
+      const srtp = p.filter(function(x){ return (x.protocol || x.proto || '').toUpperCase() === 'SRTP'; }).length;
+      const sip = p.filter(function(x){ return (x.protocol || x.proto || '').toUpperCase() === 'SIP'; }).length;
+      const dns = p.filter(function(x){ return (x.protocol || x.proto || '').toUpperCase() === 'DNS'; }).length;
+      const s = uploadResult.summary || {};
+      return {
+        captured: p.length,
+        analyzed: p.length,
+        protocols: new Set(p.map(function(x){ return (x.protocol || x.proto || '').toUpperCase(); })).size,
+        sessions: (uploadResult.voip_sessions || []).length,
+        ips: (uploadResult.rows || []).length,
+        srtp: srtp,
+        sip: sip,
+        dns: dns,
+        pps: 0,
+        bandwidth: 0,
+        duration: s.duration || '0:00',
+        startTime: s.created_at ? s.created_at.split('T')[1]?.slice(0,8) : '--:--:--'
+      };
+    }
+    return stats;
+  }, [stats, uploadResult]);
+
+  const calculatedMilestones = useMemo(function() {
+    const list = Array(6).fill('pending');
+    
+    // Step 1: Capture Started
+    if (isCapturing || uploadResult) {
+      list[0] = 'complete';
+    }
+    
+    // Step 2: Call Detection (any packets captured)
+    if (packets.length > 0 || (uploadResult && uploadResult.packet_rows && uploadResult.packet_rows.length > 0)) {
+      list[0] = 'complete';
+      list[1] = 'complete';
+    }
+    
+    // Step 3: VoIP Packet Interception (any STUN/SIP/RTP/SRTP packets)
+    const hasVoipPackets = packets.some(function(p){ return ['SIP', 'RTP', 'SRTP', 'STUN'].includes(p.proto); }) || 
+                           (uploadResult && uploadResult.packet_rows && uploadResult.packet_rows.some(function(p){ return ['SIP', 'RTP', 'SRTP', 'STUN'].includes(p.protocol || p.proto); }));
+    if (hasVoipPackets || voipSessions.length > 0) {
+      list[0] = 'complete';
+      list[1] = 'complete';
+      list[2] = 'complete';
+    }
+    
+    // Step 4: Protocol Analysis (VoIP session detected/analyzed)
+    if (!isCapturing && voipSessions.length > 0) {
+      list[0] = 'complete';
+      list[1] = 'complete';
+      list[2] = 'complete';
+      list[3] = 'complete';
+    }
+    
+    // Step 5: IP Address Extraction (any IPs in active list)
+    if (!isCapturing && activeIPs.length > 0) {
+      list[0] = 'complete';
+      list[1] = 'complete';
+      list[2] = 'complete';
+      list[3] = 'complete';
+      list[4] = 'complete';
+    }
+    
+    // Step 6: Geo-Location Mapping (main target profile or any active IP with geo resolved)
+    const hasGeo = (profile && profile.ip && profile.country) || activeIPs.some(function(ip){ return ip.country; });
+    if (!isCapturing && hasGeo) {
+      list[0] = 'complete';
+      list[1] = 'complete';
+      list[2] = 'complete';
+      list[3] = 'complete';
+      list[4] = 'complete';
+      list[5] = 'complete';
+    }
+    
+    // If capture is active but subsequent steps are not complete, show the next pending step as 'active' (pulsing yellow)
+    if (isCapturing) {
+      for (let i = 0; i < 6; i++) {
+        if (list[i] === 'pending') {
+          list[i] = 'active';
+          break;
+        }
+      }
+    }
+    
+    return list;
+  }, [isCapturing, uploadResult, packets, voipSessions, activeIPs, profile]);
+
+  const timerRef=useRef(null);
+  const wsRef=useRef(null);
+  const wsReconRef=useRef(null);
+  const startTimeRef=useRef(null);
+  const seqRef=useRef(0);
+  const stepRef=useRef(0);
+  const resolvedIPsRef=useRef(new Set());
+
+  // UTC clock update in header
+  useEffect(()=>{
+    function tick(){
+      const el=document.getElementById('hdr-clock');
+      if(el){
+        const now=new Date();
+        el.textContent=now.toISOString().split('T')[0]+' '+now.toISOString().split('T')[1].split('.')[0]+' UTC';
+      }
+    }
+    tick();
+    const id=setInterval(tick,1000);
+    return ()=>clearInterval(id);
+  },[]);
+
+  // Load initial settings & integrations on mount
+  useEffect(()=>{
+    loadInterfaces();
+    loadInvestigations();
+    checkCaptureStatus();
+    addLog('CyberDEEP VoIP Forensics Console initialized.', 'info', 'INFO');
+    addLog('System ready — select network interface & click Start Capture.', 'info', 'INFO');
+  },[]);
+
+  async function checkCaptureStatus() {
+    try {
+      const statsData = await api('/api/capture/status');
+      if (statsData.is_capturing) {
+        setIsCapturing(true);
+        setInvestigationId(statsData.session_id || '—');
+        
+        // Load initial stats
+        const sec = statsData.elapsed_seconds || 0;
+        const mins = Math.floor(sec/60).toString().padStart(2,'0');
+        const secs = (sec%60).toString().padStart(2,'0');
+        setElapsed(mins+':'+secs);
+
+        setStats(prev => ({
+          ...prev,
+          captured: statsData.packet_count || 0,
+          pps: statsData.pps || 0,
+          duration: mins+':'+secs,
+          startTime: new Date(Date.now() - (statsData.elapsed_seconds || 0) * 1000).toISOString().split('T')[1].split('.')[0]
+        }));
+
+        // Automatically connect WS
+        try {
+          const ticketData = await api('/api/auth/ticket', { method: 'POST' });
+          connectWS(ticketData.ticket);
+        } catch (wsErr) {}
+
+        // Resume elapsed timer
+        startTimeRef.current = Date.now() - (statsData.elapsed_seconds || 0) * 1000;
+        timerRef.current = setInterval(function(){
+          const s = Math.floor((Date.now()-startTimeRef.current)/1000);
+          const mStr = Math.floor(s/60).toString().padStart(2,'0');
+          const sStr = (s%60).toString().padStart(2,'0');
+          setElapsed(mStr+':'+sStr);
+          setStats(prev => ({...prev, duration: mStr+':'+sStr}));
+        }, 1000);
+      }
+    } catch(e) {}
+  }
+
+  async function loadInterfaces(isManual=false) {
+    try {
+      const d = await api('/api/interfaces');
+      const arr = d.interfaces || [];
+      setInterfaces(arr);
+      if(arr.length) {
+        const first = arr[0];
+        setSelectedIface(typeof first === 'object' && first ? (first.id || first.name) : first);
+      }
+      if (isManual) {
+        toast('Network interfaces re-scanned successfully!', 'success');
+      }
+    } catch(e) {
+      setInterfaces([]);
+      setSelectedIface('');
+      toast('Failed to load interfaces: ' + e.message, 'error');
+    }
+  }
+
+
+
+  async function loadInvestigations() {
+    try {
+      const d = await api('/api/investigations');
+      setInvestigations(Array.isArray(d) ? d : []);
+    } catch(e) {}
+  }
+
+  const addLog=useCallback(function(message,type,level){
+    type=type||'info';level=level||'INFO';
+    const time=formatLocalTime();
+    setLogs(function(prev){return prev.slice(-100).concat([{time,message,type,level}]);});
+  },[]);
+
+  function advanceMilestone(){
+    const step = stepRef.current;
+    if(step>=MILESTONES.length) return;
+    setMilestones(function(prev){
+      const next=[...prev];
+      while(next.length<MILESTONES.length) next.push('pending');
+      next[step]='active';
+      return next;
+    });
+    setTimeout(function(){
+      setMilestones(function(prev){
+        const next=[...prev];
+        while(next.length<MILESTONES.length) next.push('pending');
+        next[step]='complete';
+        return next;
+      });
+    },800);
+    addLog(MILESTONES[step].title,'info',MILESTONES[step].type==='warn'?'WARN':'INFO');
+    stepRef.current = step+1;
+  }
+
+  // Handle incoming WS packets and statistics
+  function handleWsMessage(msg){
+    if(!msg||!msg.type) return;
+
+    if(msg.type==='packet'){
+      const ts = msg.timestamp ? new Date(msg.timestamp*1000).toISOString().split('T')[1]?.split('.')[0]||'' : new Date().toISOString().split('T')[1].split('.')[0];
+      const proto = (msg.protocol || '').toUpperCase();
+      const pkt = {
+        num: ++seqRef.current,
+        time: ts,
+        proto: proto,
+        src: (msg.source_ip||'')+(msg.source_port?':'+msg.source_port:''),
+        dst: (msg.destination_ip||'')+(msg.destination_port?':'+msg.destination_port:''),
+        len: msg.length||0,
+        info: msg.summary||msg.payload_preview||'',
+        source_ip: msg.source_ip,
+        destination_ip: msg.destination_ip,
+        source_port: msg.source_port,
+        destination_port: msg.destination_port,
+        protocol: msg.protocol,
+        length: msg.length,
+        timestamp: msg.timestamp
+      };
+      setPackets(function(prev){ return prev.concat(pkt).slice(-200); });
+      setStats(function(prev){
+        return {
+          ...prev,
+          captured: prev.captured+1,
+          analyzed: prev.analyzed+1,
+          srtp: prev.srtp+(proto==='SRTP'?1:0),
+          rtcp: prev.rtcp+(proto==='RTCP'?1:0),
+          stun: prev.stun+(proto==='STUN'?1:0),
+          sip: prev.sip+(proto==='SIP'?1:0),
+          dns: prev.dns+(proto==='DNS'?1:0)
+        };
+      });
+
+      if (['SIP', 'RTP', 'SRTP', 'STUN'].includes(proto)) {
+        const flowId = msg.flow_id || (msg.source_ip + '-' + msg.destination_ip);
+        const isRelayed = proto === 'STUN' || proto === 'TURN' || (msg.source_port === 3478 || msg.destination_port === 3478);
+        const typeStr = isRelayed ? 'RELAY' : 'P2P';
+        const s = {
+          session_id: flowId,
+          caller: msg.source_ip || '',
+          callee: msg.destination_ip || '',
+          protocol: proto,
+          jitter_ms: msg.jitter || 0.12,
+          mos_score: msg.mos || 4.38,
+          media_path: proto,
+          connection_type: typeStr,
+          timestamp: msg.timestamp || (Date.now() / 1000),
+          status: isRelayed 
+            ? '[RELAY] ' + (msg.source_ip || '') + ' → [SERVER] → ' + (msg.destination_ip || '')
+            : '[P2P] ' + (msg.source_ip || '') + ' ⟷ ' + (msg.destination_ip || '')
+        };
+        setVoipSessions(function(prev) {
+          const idx = prev.findIndex(function(x){ return x.session_id === s.session_id; });
+          if(idx>=0){ const next=[...prev]; next[idx]=s; return next; }
+          return [...prev, s];
+        });
+      }
+
+      const isPub = function(ipStr) {
+        if (!ipStr) return false;
+        return !(ipStr.startsWith('192.168.') || ipStr.startsWith('10.') || ipStr.startsWith('127.') || ipStr.startsWith('172.16.') || ipStr.startsWith('169.254.') || ipStr.startsWith('::1') || ipStr.startsWith('fe80:'));
+      };
+
+      const targetIP = isPub(msg.destination_ip) ? msg.destination_ip : (isPub(msg.source_ip) ? msg.source_ip : null);
+
+      if (targetIP) {
+        setActiveIPs(function(prev) {
+          if (prev.some(function(x){ return x.ip === targetIP; })) return prev;
+          return prev.concat([{
+            ip: targetIP,
+            asn: 'Resolving...',
+            org: 'Live Packet Target',
+            city: '',
+            country: '',
+            state: '',
+            lat: 0,
+            lon: 0,
+            isp: 'Resolving...'
+          }]);
+        });
+
+        setProfile(function(p) {
+          if (p.ip && p.isVoip && p.ip !== targetIP) return p;
+          return {
+            ip: targetIP,
+            city: p.ip === targetIP ? p.city : '',
+            country: p.ip === targetIP ? p.country : '',
+            state: p.ip === targetIP ? p.state : '',
+            lat: p.ip === targetIP ? p.lat : 0,
+            lon: p.ip === targetIP ? p.lon : 0,
+            asn: p.ip === targetIP ? p.asn : 'Resolving...',
+            isp: p.ip === targetIP ? p.isp : 'Resolving...',
+            org: p.ip === targetIP ? p.org : 'Live Packet Target',
+            risk: p.ip === targetIP ? p.risk : 0,
+            isVoip: true
+          };
+        });
+
+        // Trigger immediate automatic background lookup using our telecom API & offline ASN fallback engine
+        if (!resolvedIPsRef.current.has(targetIP)) {
+          resolvedIPsRef.current.add(targetIP);
+          api('/api/geoip/lookup?ip=' + encodeURIComponent(targetIP)).then(function(g) {
+            if (g && g.status === 'success') {
+              const rawAsn = g.as || g.asn || 'AS0';
+              const cleanAsn = rawAsn.replace(/^AS/i, '').trim() || '—';
+              const resolvedOrg = g.org || g.isp || g.asname || 'Resolved Target';
+              const resolvedIsp = g.isp || g.org || g.asname || '';
+
+              setActiveIPs(function(prev) {
+                const idx = prev.findIndex(function(x){ return x.ip === targetIP; });
+                const entry = {
+                  ip: targetIP,
+                  asn: cleanAsn,
+                  org: resolvedOrg,
+                  city: g.city || '',
+                  country: g.country || '',
+                  state: g.regionName || g.region || '',
+                  lat: g.lat || g.latitude || 0,
+                  lon: g.lon || g.longitude || 0,
+                  isp: resolvedIsp
+                };
+                if (idx >= 0) { const next = [...prev]; next[idx] = entry; return next; }
+                return [...prev, entry];
+              });
+
+              setProfile(function(p) {
+                if (p.ip && p.isVoip && p.ip !== targetIP) return p;
+                return {
+                  ip: targetIP,
+                  city: g.city || '',
+                  country: g.country || '',
+                  state: g.regionName || g.region || '',
+                  lat: g.lat || g.latitude || 0,
+                  lon: g.lon || g.longitude || 0,
+                  asn: cleanAsn,
+                  isp: resolvedIsp,
+                  org: resolvedOrg,
+                  risk: 0,
+                  isVoip: true
+                };
+              });
+            }
+          }).catch(function(){});
+        }
+
+        if(stepRef.current===4) advanceMilestone(); // step 5: IP Extraction
+        if(stepRef.current===5) advanceMilestone(); // step 6: Geo Mapping
+      }
+
+      if(stepRef.current===1 && (proto==='STUN'||proto==='SIP'||proto==='RTP'||proto==='SRTP')){
+        advanceMilestone(); // step 2: Call Detection
+      }
+      if(stepRef.current===2 && (proto==='SRTP'||proto==='RTP')){
+        advanceMilestone(); // step 3: VoIP Packet Interception
+      }
+    }
+
+    if(msg.type==='enrichment'&&msg.ip){
+      const ip = msg.ip;
+      const g = msg.geoip || {};
+      const t = msg.threat || {};
+      
+      setActiveIPs(prev => {
+        const idx = prev.findIndex(x => x.ip === ip);
+        const resolvedOrg = g.asn_org || g.isp || g.org || 'Local Lookup';
+        const resolvedIsp = g.isp || g.asn_org || g.org || '';
+        const rawAsn = g.asn || 'AS0';
+        const cleanAsn = rawAsn.replace(/^AS/i, '').trim() || '—';
+        const entry = {
+          ip: ip,
+          asn: cleanAsn,
+          org: resolvedOrg,
+          city: g.city || '',
+          country: g.country || '',
+          state: g.region || '',
+          lat: g.latitude || 0,
+          lon: g.longitude || 0,
+          isp: resolvedIsp
+        };
+        if(idx>=0){ const next=[...prev]; next[idx]=entry; return next; }
+        return [...prev, entry];
+      });
+
+      const isPrivate=ip.startsWith('192.168.')||ip.startsWith('10.')||ip.startsWith('127.')||ip.startsWith('172.16.')||ip.startsWith('169.254.')||ip.startsWith('::1');
+      if(!isPrivate){
+        setProfile(p => {
+          if(p.ip && p.isVoip && p.ip !== ip) return p;
+          const resolvedOrg = g.asn_org || g.isp || g.org || '';
+          const resolvedIsp = g.isp || g.asn_org || g.org || '';
+          return {
+            ip: ip,
+            city: g.city || '',
+            country: g.country || '',
+            state: g.region || '',
+            lat: g.latitude || 0,
+            lon: g.longitude || 0,
+            asn: g.asn || '',
+            isp: resolvedIsp,
+            org: resolvedOrg,
+            risk: t.risk_score || t.score || 0,
+            isVoip: p.isVoip || false
+          };
+        });
+        if(stepRef.current===4) advanceMilestone(); // step 5: IP Extraction
+        if(stepRef.current===5) advanceMilestone(); // step 6: Geo Mapping
+        addLog('Enriched: '+ip+' → '+(g.city||'')+(g.country?' '+g.country:'')+(msg.classification?' ['+msg.classification+']':''),'info','INFO');
+      }
+    }
+
+    if(msg.type==='alert'){
+      const alertObj = msg.alert || {};
+      const alertMsg = alertObj.description || alertObj.message || JSON.stringify(msg.alert || msg.data || {});
+      addLog('⚠ [' + (alertObj.category || 'ALERT') + '] ' + alertMsg, 'warn', 'WARN');
+    }
+
+    if(msg.type==='stats'){
+      setStats(prev => ({
+        ...prev,
+        captured: msg.packet_count || prev.captured,
+        pps: msg.pps || prev.pps,
+        bandwidth: msg.bandwidth_kbps || prev.bandwidth,
+        sessions: msg.session_count || prev.sessions,
+        protocols: msg.protocol_count || prev.protocols
+      }));
+    }
+
+    if(msg.type==='flow'||msg.type==='voip'){
+      const s = {
+        session_id: msg.call_id || msg.flow_id || ('ws-'+Date.now()),
+        caller: msg.caller || msg.source_ip || '',
+        callee: msg.callee || msg.destination_ip || '',
+        protocol: msg.call_type || msg.protocol || 'VoIP',
+        jitter_ms: msg.jitter || 0,
+        mos_score: msg.mos || 0,
+        media_path: msg.media_path || '',
+        status: msg.status || ('[CALLER] ' + (msg.caller || '') + ' → [RELAY] ' + (msg.callee || ''))
+      };
+      setVoipSessions(prev => {
+        const idx = prev.findIndex(x => x.session_id === s.session_id);
+        if(idx>=0){ const next=[...prev]; next[idx]=s; return next; }
+        return [...prev, s];
+      });
+
+      const callerIP = msg.caller || msg.source_ip || '';
+      const calleeIP = msg.callee || msg.destination_ip || '';
+      const isPub = function(ip) {
+        if(!ip) return false;
+        return !(ip.startsWith('192.168.')||ip.startsWith('10.')||ip.startsWith('127.')||ip.startsWith('172.16.')||ip.startsWith('169.254.')||ip.startsWith('::1'));
+      };
+      let targetIP = '';
+      if(isPub(calleeIP)) targetIP = calleeIP;
+      else if(isPub(callerIP)) targetIP = callerIP;
+
+      if(targetIP){
+        setProfile(p => {
+          if(p.ip === targetIP && p.isVoip) return p;
+          return {
+            ip: targetIP,
+            city: p.ip === targetIP ? p.city : '',
+            country: p.ip === targetIP ? p.country : '',
+            state: p.ip === targetIP ? p.state : '',
+            lat: p.ip === targetIP ? p.lat : 0,
+            lon: p.ip === targetIP ? p.lon : 0,
+            asn: p.ip === targetIP ? p.asn : '',
+            isp: p.ip === targetIP ? p.isp : '',
+            org: p.ip === targetIP ? p.org : '',
+            risk: p.ip === targetIP ? p.risk : 0,
+            isVoip: true
+          };
+        });
+      }
+
+      if(stepRef.current===3) advanceMilestone(); // step 4: Protocol Analysis
+    }
+
+    if(msg.type==='voip_update' && msg.session){
+      const sess = msg.session;
+      const isRelayed = sess.turn_allocations?.length > 0 || (sess.turn_servers && sess.turn_servers.length > 0);
+      const typeStr = isRelayed ? 'RELAY' : 'P2P';
+      
+      let routeStr = '';
+      if (sess.turn_allocations && sess.turn_allocations.length > 0) {
+        const a = sess.turn_allocations[0];
+        routeStr = '[CLIENT] ' + a.client + ' → [RELAY] ' + a.relay;
+      } else {
+        routeStr = sess.caller_ip + ' ⟷ ' + sess.callee_ip;
+      }
+      
+      const s = {
+        session_id: sess.call_id || ('ws-'+Date.now()),
+        caller: sess.caller_ip || 'Unknown',
+        callee: sess.callee_ip || 'Unknown',
+        protocol: sess.media_path || 'VoIP',
+        jitter_ms: sess.jitter || 0,
+        mos_score: sess.mos || 0,
+        mos_label: sess.mos_label || 'Excellent',
+        connection_type: typeStr,
+        timestamp: sess.start_time || (Date.now() / 1000),
+        status: sess.ice_state ? ('ICE state: ' + sess.ice_state + ' | ' + routeStr) : routeStr,
+        
+        // Save advanced tracking metrics on the session object
+        ice_state: sess.ice_state,
+        nominated_pair: sess.nominated_pair,
+        turn_allocations: sess.turn_allocations,
+        extracted_ips: sess.extracted_ips,
+        confidence_score: sess.confidence_score,
+        confidence_tier: sess.confidence_tier,
+        warnings: sess.warnings
+      };
+      
+      setVoipSessions(prev => {
+        const idx = prev.findIndex(x => x.session_id === s.session_id);
+        if(idx>=0){ const next=[...prev]; next[idx]=s; return next; }
+        return [...prev, s];
+      });
+
+      const callerIP = sess.caller_ip || '';
+      const calleeIP = sess.callee_ip || '';
+      const isPub = function(ip) {
+        if(!ip) return false;
+        return !(ip.startsWith('192.168.')||ip.startsWith('10.')||ip.startsWith('127.')||ip.startsWith('172.16.')||ip.startsWith('169.254.')||ip.startsWith('::1'));
+      };
+      let targetIP = '';
+      if(isPub(calleeIP)) targetIP = calleeIP;
+      else if(isPub(callerIP)) targetIP = callerIP;
+
+      if(targetIP){
+        setProfile(p => {
+          if(p.ip === targetIP && p.isVoip) return p;
+          return {
+            ip: targetIP,
+            city: p.ip === targetIP ? p.city : '',
+            country: p.ip === targetIP ? p.country : '',
+            state: p.ip === targetIP ? p.state : '',
+            lat: p.ip === targetIP ? p.lat : 0,
+            lon: p.ip === targetIP ? p.lon : 0,
+            asn: p.ip === targetIP ? p.asn : '',
+            isp: p.ip === targetIP ? p.isp : '',
+            org: p.ip === targetIP ? p.org : '',
+            risk: p.ip === targetIP ? p.risk : 0,
+            isVoip: true
+          };
+        });
+      }
+      if(stepRef.current===3) advanceMilestone(); // step 4: Protocol Analysis
+    }
+
+    if(msg.type==='capture_report' && msg.report){
+      const rep = msg.report;
+      addLog('Capture report received for session: ' + rep.session_id, 'success', 'INFO');
+      if (Array.isArray(rep.extracted_ips)) {
+        rep.extracted_ips.forEach(function(e) {
+          if (e.ip) {
+            setActiveIPs(prev => {
+              if (prev.some(x => x.ip === e.ip)) return prev;
+              return [...prev, {
+                ip: e.ip,
+                asn: 'AS0',
+                org: e.source || 'Capture Report',
+                city: '',
+                country: '',
+                state: '',
+                lat: 0,
+                lon: 0,
+                isp: ''
+              }];
+            });
+          }
+        });
+      }
+    }
+
+    if(msg.type==='log'){
+      addLog(msg.message||String(msg.data),'info','INFO');
+    }
+  }
+
+  function connectWS(ticket){
+    const wsUrl = (window.location.protocol==='https:'?'wss:':'ws:')+'//'+ window.location.host+'/api/capture/live?ticket='+ticket;
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+
+    ws.onopen = function(){
+      setWsConnected(true);
+      addLog('WebSocket connected to live data feed','success','INFO');
+      ws.send(JSON.stringify({action:'sync'}));
+    };
+
+    ws.onmessage = function(event){
+      try {
+        const msg = JSON.parse(event.data);
+        if(msg.type==='batch' && Array.isArray(msg.data)){
+          msg.data.forEach(handleWsMessage);
+        } else {
+          handleWsMessage(msg);
+        }
+      } catch(e){}
+    };
+
+    ws.onerror = function(){ addLog('WebSocket protocol error','warn','WARN'); };
+
+    ws.onclose = function(){
+      setWsConnected(false);
+      if(isCapturing){
+        addLog('WebSocket stream disconnected — trying reconnection…','warn','WARN');
+        wsReconRef.current = setTimeout(async function(){
+          try {
+            const ticketData = await api('/api/auth/ticket',{method:'POST'});
+            connectWS(ticketData.ticket);
+          } catch(e){ addLog('Reconnection failed: '+e.message,'warn','WARN'); }
+        },3000);
+      }
+    };
+  }
+
+  async function startCapture() {
+    if(!getKey()){
+      toast('No API key set — please save your API key in Settings first.','error');
+      setActiveTab('settings');
+      return;
+    }
+    try {
+      await api('/api/capture/start',{
+        method:'POST',
+        body:JSON.stringify({interface:selectedIface,filter_expr:bpfFilter,promiscuous:true})
+      });
+
+      const ticketData = await api('/api/auth/ticket',{method:'POST'});
+
+      seqRef.current=0;
+      stepRef.current=0;
+      setIsCapturing(true);
+      setLogs([]);
+      setMilestones([]);
+      setPackets([]);
+      setVoipSessions([]);
+      setActiveIPs([]);
+      setUploadResult(null);
+      setProfile({});
+      
+      let realId = 'live_' + Math.floor(Date.now() / 1000);
+      try {
+        const statsData = await api('/api/capture/status');
+        if(statsData.session_id) realId = statsData.session_id;
+      } catch(statusErr) {}
+      setInvestigationId(realId);
+      
+      startTimeRef.current=Date.now();
+      const startStr = new Date().toISOString().split('T')[1].split('.')[0];
+      setStats({captured:0,analyzed:0,protocols:0,sessions:0,ips:0,stun:0,turn:0,ice:0,srtp:0,rtcp:0,sip:0,sdp:0,dns:0,pps:0,bandwidth:0,latency:0,jitter:0,loss:0,rtt:0,duration:'0:00',startTime:startStr});
+      setActiveTab('live');
+
+      addLog('Capture initialized on '+selectedIface,'info','INFO');
+      advanceMilestone();
+
+      connectWS(ticketData.ticket);
+
+      timerRef.current=setInterval(function(){
+        const sec=Math.floor((Date.now()-startTimeRef.current)/1000);
+        const mins=Math.floor(sec/60).toString().padStart(2,'0');
+        const secs=(sec%60).toString().padStart(2,'0');
+        setElapsed(mins+':'+secs);
+        setStats(prev => ({...prev, duration: mins+':'+secs}));
+      },1000);
+
+      toast('Live capture active on '+selectedIface,'success');
+    } catch(e){
+      toast('Start failed: '+e.message,'error');
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (wsRef.current) wsRef.current.close();
+      setIsCapturing(false);
+      setElapsed('0:00');
+      addLog('Capture stopped','warn','WARN');
+    }
+  }
+
+  const restartServer = async function() {
+    try {
+      addLog('Restarting server engines...', 'warn', 'WARN');
+      const res = await api('/api/system/restart', { method: 'POST' });
+      if (res.capturing_resumed) {
+        setIsCapturing(true);
+        addLog('Server restarted & live capture automatically resumed', 'success', 'INFO');
+        toast('Server refreshed — Capture resumed!', 'success');
+      } else {
+        if (isCapturing) {
+          if (timerRef.current) clearInterval(timerRef.current);
+          if (wsRef.current) wsRef.current.close();
+          setIsCapturing(false);
+          setElapsed('0:00');
+        }
+        addLog('Server engines restarted successfully', 'success', 'INFO');
+        toast('Server refreshed successfully', 'success');
+      }
+    } catch(err) {
+      addLog('Server restart failed: ' + err.message, 'error', 'ERROR');
+      toast('Failed to restart server: ' + err.message, 'error');
+    }
+  };
+
+  async function stopCapture() {
+    try { await api('/api/capture/stop',{method:'POST'}); } catch(e){}
+    setIsCapturing(false);
+    if(timerRef.current){ clearInterval(timerRef.current); timerRef.current=null; }
+    if(wsRef.current){ wsRef.current.close(); wsRef.current=null; }
+    if(wsReconRef.current){ clearTimeout(wsReconRef.current); }
+    setWsConnected(false);
+    addLog('Capture session terminated.','success','INFO');
+    toast('Capture stopped','success');
+    loadInvestigations();
+  }
+
+  function toggleCapture() {
+    if(isCapturing) stopCapture();
+    else startCapture();
+  }
+
+  async function downloadPcap() {
+    if (!investigationId || investigationId === '—') {
+      toast('No active capture session to download.', 'error');
+      return;
+    }
+    try {
+      const blob = await apiBlob('/api/capture/export?format=pcap');
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'capture_' + investigationId + '.pcap';
+      a.click();
+      toast('PCAP file downloaded successfully', 'success');
+    } catch(e) {
+      toast('Download failed: ' + e.message, 'error');
+    }
+  }
+
+  async function saveLiveCapture() {
+    const title=prompt('Enter title for this investigation:','Live Capture '+investigationId);
+    if(!title) return;
+    try {
+      const data = await api('/api/capture/promote?title='+encodeURIComponent(title),{method:'POST'});
+      toast('Investigation persisted: '+data.id,'success');
+      addLog('Investigation saved successfully: '+data.id,'success','INFO');
+      loadInvestigations();
+    } catch(e){ toast('Save failed: '+e.message,'error'); }
+  }
+
+  async function loadInvestigation(id) {
+    try {
+      const data = await api('/api/investigations/'+id);
+      setUploadResult(data);
+      const voip = (data.correlation && data.correlation.voip_sessions) || data.voip_sessions || [];
+      if(voip.length) setVoipSessions(voip);
+      setInvestigationId(id);
+      
+      const time = formatLocalTime();
+      const logEntries = [
+        { time: time, message: 'Investigation #' + id.slice(0, 8) + ' loaded successfully.', type: 'success', level: 'INFO' },
+        { time: time, message: 'Forensics: loaded ' + (data.packet_rows?.length || 0) + ' packets.', type: 'info', level: 'INFO' },
+        { time: time, message: 'Forensics: loaded ' + (data.rows?.length || 0) + ' destination target IPs.', type: 'info', level: 'INFO' },
+        { time: time, message: 'Forensics: mapped ' + voip.length + ' VoIP call dialogs.', type: 'success', level: 'INFO' }
+      ];
+      setLogs(function(prev){ return prev.concat(logEntries); });
+      toast('Session '+id.slice(0,8)+' loaded','success');
+      setActiveTab('live');
+    } catch(e){ toast('Failed to load session: '+e.message,'error'); }
+  }
+
+  function handleUploadResult(data) {
+    setUploadResult(data);
+    const voip = (data.correlation && data.correlation.voip_sessions) || data.voip_sessions || [];
+    if(voip.length) setVoipSessions(voip);
+    if(data.id) setInvestigationId(data.id);
+
+    const time = formatLocalTime();
+    const logEntries = [
+      { time: time, message: 'PCAP upload forensic trace imported: ' + (data.filename || 'capture.pcap'), type: 'success', level: 'INFO' },
+      { time: time, message: 'Forensics: decoded ' + (data.packet_rows?.length || 0) + ' packets.', type: 'info', level: 'INFO' },
+      { time: time, message: 'Forensics: resolved ' + (data.rows?.length || 0) + ' destination target IPs.', type: 'info', level: 'INFO' },
+      { time: time, message: 'Forensics: mapped ' + voip.length + ' VoIP call dialogs.', type: 'success', level: 'INFO' }
+    ];
+    setLogs(function(prev){ return prev.concat(logEntries); });
+    toast('PCAP parsed and loaded successfully!', 'success');
+    setActiveTab('live');
+  }
+
+  function handleSaveApiKey(k) {
+    setKey(k);
+    setApiKeyState(k);
+    setTimeout(function(){
+      loadInterfaces();
+      loadInvestigations();
+    }, 100);
+  }
+
+  function renderContent(){
+    switch(activeTab){
+      case 'decoder': 
+        return h(PacketDecoderPage, { packets, uploadResult });
+      case 'upload': 
+        return h(UploadPage, { onUploadResult: handleUploadResult });
+      case 'reports':
+        return h(ReportsPage, { investigations, currentInvId: investigationId });
+      case 'settings':
+        return h(SettingsPage, { apiKey, onSave: handleSaveApiKey, wsConnected });
+      case 'voip':
+        return h(VoIPAnalyzerPage, { sessions: voipSessions, uploadResult, packets: displayedPackets });
+      case 'geoip': 
+        return h(GeoIPPage, { profile: activeProfile, activeIPs: displayedActiveIPs, selectedIP: selectedIP, setSelectedIP: setSelectedIP });
+      case 'live':
+      default:
+        return h('div',{},
+          h('div',{style:{marginBottom:'20px'}},
+            h('div',{style:{display:'flex',alignItems:'center',gap:'12px',marginBottom:'4px'}},h(IconActivity),h('h1',{style:{fontSize:'16px',fontWeight:600,letterSpacing:'2px',textTransform:'uppercase',fontFamily:'var(--font-mono)'}},'Real-Time Investigation Workspace')),
+            h('div',{style:{fontSize:'11px',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'3px',marginLeft:'28px'}},'Unified Capture · Parse · Attribute · Geo · Intel')
+          ),
+          h(StatusCards,{milestones: calculatedMilestones}),
+          h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'16px',marginBottom:'16px'}},
+            h(TerminalLog,{logs}),
+            h(GeoPanel,{profile: activeProfile, isCapturing: isCapturing})
+          ),
+          h('div',{style:{marginBottom:'16px',height:'280px'}},
+            h(ASNMapper, { profile: activeProfile, activeIPs: displayedActiveIPs, selectedIP: selectedIP, setSelectedIP: setSelectedIP })
+          ),
+          h(PacketViewer,{packets: displayedPackets}),
+          h(InvestigationSummary,{profile: activeProfile, stats: displayedStats, investigationId: investigationId, isCapturing: isCapturing, onPromote: saveLiveCapture})
+        );
+    }
+  }
+
+  return h('div',{style:{display:'flex',flexDirection:'column',height:'100vh',background:'var(--bg-primary)'},className:'cyber-grid'},
+    h(Header,{isCapturing,onToggle:toggleCapture,elapsed,investigationId,interfaces,selectedIface,onIfaceChange:setSelectedIface,bpfFilter,onBpfChange:setBpfFilter,onRefreshInterfaces:()=>loadInterfaces(true),onDownloadPcap:downloadPcap,onRestartServer:restartServer}),
+    h('div',{style:{display:'flex',flex:1,overflow:'hidden'}},
+      h(Sidebar,{activeTab,setActiveTab,isCapturing}),
+      h('main',{style:{flex:1,overflow:'auto',padding:'20px'}},
+        renderContent(),
+        h('div',{style:{textAlign:'center',padding:'20px',fontSize:'11px',color:'var(--text-muted)',fontFamily:'var(--font-mono)',textTransform:'uppercase',letterSpacing:'2px'}},'DeepLive VOIP Capture · Military-Grade Forensic Console')
+      )
+    )
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(h(App));
+})();
+</script>
+</body>
+</html>
