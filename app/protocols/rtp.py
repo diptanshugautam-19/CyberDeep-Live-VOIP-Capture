@@ -4,20 +4,42 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Common RTP payload type to codec name mappings
+# Comprehensive IANA / RFC RTP payload type to codec name mappings (RFC 3551, RFC 7587, RFC 6184)
 PAYLOAD_TYPE_NAMES = {
     0: "PCMU (G.711μ)",
     3: "GSM",
     4: "G.723",
+    5: "DVI4 (8kHz)",
+    6: "DVI4 (16kHz)",
+    7: "L16 (Mono)",
     8: "PCMA (G.711A)",
     9: "G.722",
+    10: "L16 (Stereo)",
+    11: "L10",
+    12: "QCELP",
+    13: "CN (Comfort Noise)",
+    14: "MPA",
+    15: "G.728",
     18: "G.729",
+    25: "CelB",
     26: "JPEG",
+    28: "nv",
     31: "H.261",
     32: "MPV",
     33: "MP2T",
     34: "H.263",
-    # Dynamic range (96-127) — codec name comes from SDP a=rtpmap
+    # Well-known dynamic WebRTC codecs (RFC 7587, RFC 6184, RFC 7741)
+    96: "Opus (WebRTC Audio)",
+    97: "Opus-DRED",
+    98: "AMR-WB (Adaptive Multi-Rate Wideband)",
+    99: "AMR (Adaptive Multi-Rate)",
+    100: "VP8 (WebRTC Video)",
+    101: "VP9 (WebRTC Video)",
+    102: "H.264 (AVC Video)",
+    103: "H.265 (HEVC Video)",
+    104: "AV1 (AOMedia Video 1)",
+    111: "Opus 48kHz Stereo",
+    126: "Telephone-Event (DTMF RFC 4733)",
 }
 
 # G.711 PCMU/PCMA is 8000Hz. Opus is typically 48000Hz. G.722 is 16000Hz.

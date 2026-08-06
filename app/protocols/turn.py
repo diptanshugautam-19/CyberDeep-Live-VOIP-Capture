@@ -6,7 +6,7 @@ Integrates ProductionWebRTCCaptureEngine.parse_turn_message() logic.
 import socket
 import struct
 import logging
-from typing import Optional, Tuple, Dict
+from typing import Optional, Tuple, Dict, List
 from datetime import datetime
 
 from .stun import parse_stun_packet, decode_xor_mapped_address, STUN_MAGIC_COOKIE
@@ -25,6 +25,7 @@ TURN_METHODS = {
 }
 
 # STUN attribute type constants (mirrored from Production WebRTC Capture Engine v3)
+ATTR_XOR_MAPPED_ADDR   = 0x0020
 ATTR_XOR_RELAYED_ADDR  = 0x0016
 ATTR_XOR_PEER_ADDR     = 0x0012
 ATTR_CHANNEL_NUMBER    = 0x000C
@@ -89,8 +90,10 @@ def _decode_xor_addr_raw(raw: bytes, txn_id: bytes) -> Optional[Tuple[str, int]]
             ip_bytes = bytes(a ^ b for a, b in zip(xip, (xor_key * 4)[:16]))
             ip = socket.inet_ntop(socket.AF_INET6, ip_bytes)
             return ip, port
-    except Exception:
-        pass
+    except (struct.error, ValueError, OSError) as e:
+        logger.debug(f"[TURN] Failed to decode XOR address from raw bytes: {e}")
+    except Exception as e:
+        logger.debug(f"[TURN] Unexpected error decoding XOR address: {e}")
     return None
 
 
@@ -213,11 +216,7 @@ def parse_turn_allocate_response(
     # XOR-MAPPED-ADDRESS in the Allocate response reveals the client's NAT-mapped address.
     # This is the 'turn_xor_mapped_client' source used in print_report() SRFLX category.
     xor_mapped_client = None
-    xor_raw = attrs.get(ATTR_XOR_MAPPED_ADDR if hasattr(__builtins__, 'ATTR_XOR_MAPPED_ADDR')
-                        else 0x0020)  # 0x0020 = XOR-MAPPED-ADDRESS
-    # Use the constant directly since we're in this module
-    _ATTR_XOR_MAPPED = 0x0020
-    xor_raw = attrs.get(_ATTR_XOR_MAPPED)
+    xor_raw = attrs.get(ATTR_XOR_MAPPED_ADDR)
     if xor_raw:
         xor_result = _decode_xor_addr_raw(xor_raw, txn_id)
         if xor_result:
@@ -294,15 +293,17 @@ def parse_turn_allocate_request(
 def parse_turn_channel_bind(
     payload_bytes: bytes,
     src_addr: Tuple[str, int],
-    allocations: Dict[str, TURNAllocation]
+    allocations: Dict[str, TURNAllocation],
+    client_to_allocation: Optional[Dict[str, List[str]]] = None
 ) -> bool:
     """
     Parse a TURN Channel Bind Request and update the matching TURNAllocation.
 
     Args:
-        payload_bytes: raw payload
-        src_addr:      (ip, port) of sender
-        allocations:   dict of relay_addr:port -> TURNAllocation to update
+        payload_bytes:        raw payload
+        src_addr:             (ip, port) of sender
+        allocations:          dict of relay_addr:port -> TURNAllocation to update
+        client_to_allocation: optional reverse index (client_ip -> list of allocation keys) for O(1) lookup
 
     Returns True if a channel was successfully bound, False otherwise.
     """
@@ -337,9 +338,11 @@ def parse_turn_channel_bind(
         return False
     peer_ip, peer_port = peer_result
 
-    # Find matching allocation by client address
-    for key, alloc in allocations.items():
-        if alloc.client_addr == src_addr[0]:
+    # O(1) Reverse index lookup if available
+    target_keys = client_to_allocation.get(src_addr[0], []) if client_to_allocation is not None else allocations.keys()
+    for key in target_keys:
+        alloc = allocations.get(key)
+        if alloc and alloc.client_addr == src_addr[0]:
             alloc.channels[channel] = (peer_ip, peer_port)
             logger.info(f"[TURN] Channel {channel} bound to peer {peer_ip}:{peer_port}")
             return True

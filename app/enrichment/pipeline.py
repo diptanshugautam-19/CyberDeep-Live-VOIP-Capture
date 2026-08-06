@@ -9,7 +9,7 @@ from app.enrichment.services import identify_service
 from app.enrichment.telecom import enrich_telecom
 from app.analysis.traffic import build_network_intelligence
 from app.parsers.base import ConnectionRecord
-from app.threat_intel.manager import ThreatIntelManager
+
 
 
 STUN_TURN_PORTS = {3478, 3479, 3480, 3481, 5349, 19302, 19305}
@@ -659,7 +659,7 @@ def analyze_records(records: list[ConnectionRecord]) -> dict:
     raw_records = [r.to_dict() if hasattr(r, "to_dict") else dict(r) for r in records]
     classifier = ClassificationEngine(Path("registry/interfaces"))
     
-    threat_manager = ThreatIntelManager()
+
     grouped: dict[str, list[dict]] = defaultdict(list)
     packet_rows: list[dict] = []
     stun_context = _build_stun_context(records)
@@ -775,15 +775,7 @@ def analyze_records(records: list[ConnectionRecord]) -> dict:
         service = identify_service(destination_ip, telecom.get("asn_number"), top_port, telecom.get("asn_org"))
         port_info = port_intelligence(top_port, protocol)
         
-        if destination_ip in eligible_ips:
-            threat = threat_manager.lookup(destination_ip)
-        else:
-            threat = {
-                "malicious": False,
-                "reputation_score": 0,
-                "abuse_reports": 0,
-                "threat_category": None
-            }
+
             
         timestamps = [_parse_timestamp(row.get("timestamp")) for row in rows if row.get("timestamp")]
         timestamps = [stamp for stamp in timestamps if stamp]
@@ -880,7 +872,7 @@ def analyze_records(records: list[ConnectionRecord]) -> dict:
                 "port_name": port_info["name"],
                 "unusual_port": port_info["is_unusual"],
                 "port_notes": port_info["notes"],
-                **threat,
+
                 "role": classified_endpoints.get(destination_ip, {}).get("role", "UNKNOWN"),
                 "role_confidence": int(classified_endpoints.get(destination_ip, {}).get("confidence", 0.0) * 100),
                 "role_reasons": classified_endpoints.get(destination_ip, {}).get("evidence", []),

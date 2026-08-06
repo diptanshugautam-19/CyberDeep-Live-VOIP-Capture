@@ -2,7 +2,12 @@ import struct
 import time
 import logging
 from typing import Dict, Tuple
-from scapy.layers.l2 import Ether, Loopback
+from scapy.layers.l2 import Ether, Loopback, CookedLinux
+try:
+    from scapy.layers.sll import SLL, SLL2
+except ImportError:
+    SLL = CookedLinux
+    SLL2 = CookedLinux
 from scapy.layers.inet import IP, TCP, UDP, ICMP
 from scapy.layers.inet6 import IPv6
 from scapy.packet import Packet
@@ -102,15 +107,36 @@ def is_dns_packet(payload: bytes) -> bool:
 
 
 def is_tls_packet(payload: bytes) -> bool:
-    """Check TLS record header: content type 20-23, version 0x0300-0x0304."""
+    """Check TLS / DTLS record header: content type 20-23, version 0x0300-0x0304 or DTLS 0xfeff/0xfedff."""
     if len(payload) < 5:
         return False
     content_type = payload[0]
-    if content_type not in (20, 21, 22, 23):
+    if content_type not in (20, 21, 22, 23, 24, 25):
         return False
-    if payload[1] != 0x03:
+    # Check TLS (0x03xx) or DTLS (0xfeff, 0xfdff)
+    if payload[1] == 0x03 and payload[2] in (0x00, 0x01, 0x02, 0x03, 0x04):
+        return True
+    if payload[1] in (0xfe, 0xfd) and payload[2] in (0xff, 0xfd):
+        return True
+    return False
+
+
+def is_quic_packet(payload: bytes) -> bool:
+    """Check for QUIC packet framing (RFC 9000)."""
+    if len(payload) < 5:
         return False
-    return payload[2] in (0x00, 0x01, 0x02, 0x03, 0x04)
+    # QUIC long header (first bit set) or short header
+    return (payload[0] & 0x40) != 0 and len(payload) >= 12
+
+
+def is_sctp_packet(payload: bytes) -> bool:
+    """Check for SCTP packet framing over DTLS Data Channels (RFC 8831 / RFC 8261)."""
+    if len(payload) < 12:
+        return False
+    # SCTP Common Header: SrcPort (2), DstPort (2), Verification Tag (4), Checksum (4)
+    # Check for valid WebRTC Data Channel chunk type 0x03 (DATA) or 0x00 (DATA)
+    chunk_type = payload[12] if len(payload) > 12 else None
+    return chunk_type in (0x00, 0x01, 0x02, 0x03, 0x06, 0x0A)
 
 
 def is_websocket_packet(payload: bytes) -> bool:
@@ -194,7 +220,18 @@ def parse_packet_meta(pkt_meta: dict) -> dict:
         except Exception:
             pass
 
-    # 3. Try Raw IP fallback
+    # 3. Try SLL / SLL2 / CookedLinux (Linux Cooked Capture v1 & v2 framing)
+    if packet is None:
+        for sll_cls in (SLL, SLL2, CookedLinux):
+            try:
+                pkt = sll_cls(raw)
+                if IP in pkt or IPv6 in pkt:
+                    packet = pkt
+                    break
+            except Exception:
+                pass
+
+    # 4. Try Raw IP fallback
     if packet is None:
         try:
             pkt = IP(raw)
@@ -203,7 +240,7 @@ def parse_packet_meta(pkt_meta: dict) -> dict:
         except Exception:
             pass
 
-    # 4. Try Raw IPv6 fallback
+    # 5. Try Raw IPv6 fallback
     if packet is None:
         try:
             pkt = IPv6(raw)
@@ -212,7 +249,34 @@ def parse_packet_meta(pkt_meta: dict) -> dict:
         except Exception:
             pass
 
-    # 5. Default fallback to generic Packet
+    # 6. Comprehensive Mobile & VPN Offset Scan Heuristic (RFC LinkTypes 113, 276, DLT_NULL, DLT_RAW)
+    # Handles non-standard framing headers across Android/iOS VPNService, USB Tethering, and Linux Cooked v1/v2
+    # Scans offsets: 2, 4, 10, 12, 14, 16, 18, 20, 24, 28 bytes
+    if packet is None and len(raw) > 20:
+        for offset in (2, 4, 10, 12, 14, 16, 18, 20, 24, 28):
+            if len(raw) <= offset:
+                continue
+            sliced = raw[offset:]
+            # Check IPv4 header pattern: version 4, IHL >= 5 (0x45)
+            if (sliced[0] & 0xF0) == 0x40 and (sliced[0] & 0x0F) >= 5:
+                try:
+                    pkt = IP(sliced)
+                    if pkt.version == 4:
+                        packet = pkt
+                        break
+                except Exception:
+                    pass
+            # Check IPv6 header pattern: version 6 (0x60)
+            elif (sliced[0] & 0xF0) == 0x60:
+                try:
+                    pkt = IPv6(sliced)
+                    if pkt.version == 6:
+                        packet = pkt
+                        break
+                except Exception:
+                    pass
+
+    # 7. Default fallback to generic Packet
     if packet is None:
         packet = Packet(raw)
 
@@ -328,8 +392,14 @@ def parse_packet_meta(pkt_meta: dict) -> dict:
                     parsed["summary"] = f"DNS Query: {parsed['dns_query']}"
             except Exception:
                 pass
+    elif payload and is_sctp_packet(payload):
+        parsed["protocol"] = "SCTP"
+        parsed["payload_kind"] = "webrtc_datachannel"
     elif payload and is_tls_packet(payload):
-        parsed["protocol"] = "TLS"
+        # Disambiguate TLS (TCP) vs DTLS (UDP)
+        parsed["protocol"] = "DTLS" if parsed.get("transport") == "UDP" else "TLS"
+    elif payload and is_quic_packet(payload):
+        parsed["protocol"] = "QUIC"
     elif payload and is_websocket_packet(payload):
         # WebSocket carrying SIP/SDP or STUN — mark for voip_manager TCP analysis
         parsed["protocol"] = "TCP"
@@ -362,7 +432,24 @@ async def packet_pipeline_handler(pkt_meta: dict):
     # 4. Flow tracker & SQLite batcher (uses 5-tuple flow cache)
     flow_key = flow_engine.process_packet(parsed)
 
-    # 5. Asynchronous Enrichment (GeoIP and Threat Reputations)
+    # 5. Asynchronous Enrichment & Universal Stream IP Ingestion
+    src_ip = parsed.get("source_ip")
     dst_ip = parsed.get("destination_ip")
-    if dst_ip and flow_key:
-        enrichment_engine.enqueue_ip(dst_ip, flow_key)
+
+    if src_ip and src_ip not in ("0.0.0.0", "::"):
+        voip_manager.ip_store.add_ip(
+            'raw_packet_stream', src_ip, parsed.get("source_port"),
+            6 if ':' in src_ip else 4,
+            f"Raw packet stream source IP ({parsed.get('protocol', 'IP')})",
+            'medium'
+        )
+        enrichment_engine.enqueue_ip(src_ip, flow_key or f"raw-{src_ip}")
+
+    if dst_ip and dst_ip not in ("0.0.0.0", "::"):
+        voip_manager.ip_store.add_ip(
+            'raw_packet_stream', dst_ip, parsed.get("destination_port"),
+            6 if ':' in dst_ip else 4,
+            f"Raw packet stream destination IP ({parsed.get('protocol', 'IP')})",
+            'medium'
+        )
+        enrichment_engine.enqueue_ip(dst_ip, flow_key or f"raw-{dst_ip}")

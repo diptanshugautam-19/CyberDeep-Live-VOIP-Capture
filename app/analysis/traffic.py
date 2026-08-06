@@ -11,7 +11,6 @@ from dateutil import parser as date_parser
 from app.enrichment.ports import PORT_MAP, VOIP_PORT_RANGES, port_intelligence
 from app.enrichment.telecom import enrich_telecom
 from app.parsers.base import ConnectionRecord
-from app.threat_intel.manager import ThreatIntelManager
 from app.protocols.models import VoipSession, QosMetrics
 from app.analysis.attribution import build_call_attribution
 from app.protocols.rtp import compute_qos_metrics
@@ -159,6 +158,7 @@ def _detect_anomalies(records: list[dict], hosts: list[dict], sessions: list[dic
     for src, ports in src_dst_ports.items():
         if len(ports) >= 10:
             anomalies.append({
+                "name": "Potential Port Scanning Detected",
                 "title": "Potential Port Scanning Detected",
                 "description": f"Host {src} scanned {len(ports)} unique destination ports in this traffic batch.",
                 "severity": "medium",
@@ -180,6 +180,7 @@ def _detect_anomalies(records: list[dict], hosts: list[dict], sessions: list[dic
                 pass
             if is_pub:
                 anomalies.append({
+                    "name": "High-Volume Data Exfiltration",
                     "title": "High-Volume Data Exfiltration",
                     "description": f"Abnormally high upload ratio to public server {server} ({sent / 1000000:.2f} MB uploaded).",
                     "severity": "high",
@@ -197,6 +198,7 @@ def _detect_anomalies(records: list[dict], hosts: list[dict], sessions: list[dic
             src = r.get("source_ip")
             dst = r.get("destination_ip")
             anomalies.append({
+                "name": "Cleartext Credentials Exposed",
                 "title": "Cleartext Credentials Exposed",
                 "description": f"Unencrypted authentication pattern ({', '.join(matched)}) detected in connection from {src} to {dst}.",
                 "severity": "high",
@@ -219,6 +221,7 @@ def _detect_anomalies(records: list[dict], hosts: list[dict], sessions: list[dic
 
     for src, part in long_queries[:3]:
         anomalies.append({
+            "name": "Suspicious DNS Tunneling Attempt",
             "title": "Suspicious DNS Tunneling Attempt",
             "description": f"Host {src} sent abnormally long DNS query ({part[:40]}...), indicating possible payload tunneling.",
             "severity": "medium",
@@ -228,6 +231,7 @@ def _detect_anomalies(records: list[dict], hosts: list[dict], sessions: list[dic
     for src, count in dns_queries_by_src.items():
         if count > 50:
             anomalies.append({
+                "name": "High-Frequency DNS Requests",
                 "title": "High-Frequency DNS Requests",
                 "description": f"Host {src} generated {count} DNS queries in a short timeframe, potential C2 signaling.",
                 "severity": "medium",
@@ -238,6 +242,7 @@ def _detect_anomalies(records: list[dict], hosts: list[dict], sessions: list[dic
     for h in hosts:
         if h.get("malicious") or h.get("reputation_score", 0) >= 80:
             anomalies.append({
+                "name": "High Threat Reputation Indicator",
                 "title": "High Threat Reputation Indicator",
                 "description": f"Destination {h['ip']} ({h.get('asn_org', '')}) flagged on active threat feeds (Score: {h.get('reputation_score')}/100).",
                 "severity": "high",

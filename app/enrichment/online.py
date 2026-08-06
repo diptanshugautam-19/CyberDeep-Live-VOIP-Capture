@@ -34,11 +34,16 @@ class OnlineIPInfoProvider:
         asn_number = _asn_number(asn_value)
         loc = result.get("loc", "")
         latitude, longitude = _parse_loc(loc)
+        asn_org, isp_name = _resolve_asn_details(
+            f"AS{asn_number}" if asn_number else asn_value,
+            raw_isp=result.get("as_name") or "",
+            raw_org=result.get("org") or ""
+        )
         return {
-            "isp": result.get("as_name") or result.get("org") or "",
+            "isp": isp_name,
             "asn": asn_value or ("AS" + str(asn_number) if asn_number else ""),
             "asn_number": asn_number,
-            "asn_org": result.get("as_name") or result.get("org") or "",
+            "asn_org": asn_org,
             "network_prefix": result.get("network") or result.get("prefix") or "",
             "country": result.get("country") or result.get("country_name") or "",
             "region": result.get("region") or "",
@@ -69,13 +74,40 @@ def _lookup_ipinfo(ip: str, token: str, timeout: float) -> dict:
     return {}
 
 
+KNOWN_ASN_NAMES = {
+    55836: ("Reliance Jio Infocomm Limited", "Jio Mobile 4G/5G"),
+    24560: ("Reliance Jio Infocomm Limited", "Jio Corporate"),
+    45820: ("Reliance Jio Infocomm Limited", "Jio Broadband"),
+    132117: ("Reliance Jio Infocomm Limited", "Jio Network"),
+    132118: ("Reliance Jio Infocomm Limited", "Jio Enterprise"),
+    45609: ("Bharti Airtel Limited", "Airtel Mobile"),
+    9829: ("National Internet Backbone", "BSNL India"),
+    18209: ("Vodafone Idea Limited", "Vi Mobile"),
+    32934: ("Meta Platforms, Inc.", "WhatsApp / Facebook"),
+    15169: ("Google LLC", "Google Services"),
+    13335: ("Cloudflare, Inc.", "Cloudflare CDN"),
+    16509: ("Amazon.com, Inc.", "AWS Cloud"),
+    8075: ("Microsoft Corporation", "Microsoft Azure"),
+    62041: ("Telegram Messenger LLP", "Telegram Core"),
+}
+
+
 def _asn_number(value: str) -> int:
     if not value:
         return 0
     try:
-        return int(str(value).upper().replace("AS", ""))
+        return int(str(value).upper().replace("AS", "").strip())
     except ValueError:
         return 0
+
+
+def _resolve_asn_details(asn_str: str, raw_isp: str = "", raw_org: str = "") -> tuple[str, str]:
+    """Resolve ASN number to official Organization and ISP names."""
+    asn_num = _asn_number(asn_str)
+    if asn_num in KNOWN_ASN_NAMES:
+        org, isp = KNOWN_ASN_NAMES[asn_num]
+        return org, raw_isp or isp
+    return raw_org or raw_isp or f"AS{asn_num}", raw_isp or raw_org or f"AS{asn_num}"
 
 
 def _parse_loc(value: str) -> tuple[float | None, float | None]:
@@ -347,11 +379,12 @@ def _parse_ip_api_result_raw(result: dict) -> dict:
         }
     elif source == "ipapi.co":
         asn_value = result.get("asn") or ""
+        asn_org, isp_name = _resolve_asn_details(asn_value, raw_isp=result.get("org") or "", raw_org=result.get("org") or "")
         return {
-            "isp": result.get("org") or "",
+            "isp": isp_name,
             "asn": asn_value,
             "asn_number": _asn_number(asn_value),
-            "asn_org": result.get("org") or "",
+            "asn_org": asn_org,
             "network_prefix": result.get("network") or "",
             "country": result.get("country_name") or result.get("country") or "",
             "region": result.get("region") or "",
@@ -363,11 +396,13 @@ def _parse_ip_api_result_raw(result: dict) -> dict:
         }
     else:
         asn_value = result.get("as") or ""
+        asn_str = asn_value.split(" ")[0] if asn_value else ""
+        asn_org, isp_name = _resolve_asn_details(asn_str, raw_isp=result.get("isp") or "", raw_org=result.get("org") or "")
         return {
-            "isp": result.get("isp") or "",
-            "asn": asn_value.split(" ")[0] if asn_value else "",
+            "isp": isp_name,
+            "asn": asn_str,
             "asn_number": _asn_number(asn_value),
-            "asn_org": result.get("org") or result.get("isp") or "",
+            "asn_org": asn_org,
             "network_prefix": "",
             "country": result.get("country") or "",
             "region": result.get("regionName") or "",

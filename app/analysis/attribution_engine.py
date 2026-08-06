@@ -48,6 +48,7 @@ class RtpStream:
     source_ips: Set[str] = field(default_factory=set)
     dest_ips: Set[str] = field(default_factory=set)
     is_srtp: bool = False
+    payload_types_seen: Set[int] = field(default_factory=set)
     packets_from: List[Tuple[str, int, int, float]] = field(default_factory=list)  # (src_ip, src_port, pkt_num, timestamp)
     packets_to: List[Tuple[str, int, int, float]] = field(default_factory=list)    # (dst_ip, dst_port, pkt_num, timestamp)
 
@@ -99,18 +100,13 @@ class StreamAttribution:
     remote_observable: bool = False
 
 
-def _is_private_ip(ip: str) -> bool:
+def _is_bogon_or_invalid(ip: str) -> bool:
+    """Checks if an IP address is syntactically invalid or a bogon/loopback/multicast address."""
+    if not ip or not isinstance(ip, str):
+        return True
     try:
-        addr = ipaddress.ip_address(ip)
-        if addr.is_loopback or addr.is_link_local:
-            return True
-        private_networks = (
-            ipaddress.ip_network("10.0.0.0/8"),
-            ipaddress.ip_network("172.16.0.0/12"),
-            ipaddress.ip_network("192.168.0.0/16"),
-            ipaddress.ip_network("fc00::/7"),
-        )
-        return any(addr in net for net in private_networks)
+        addr = ipaddress.ip_address(ip.strip())
+        return addr.is_loopback or addr.is_multicast or addr.is_unspecified
     except Exception:
         return True
 
@@ -180,9 +176,9 @@ class StunFamilyMessage:
         classes = {0: "Request", 1: "Indication", 2: "Success Response", 3: "Error Response"}
         self.msg_class = classes.get(c_val, "Unknown")
         
-        # Message method parsing
+        # Message method parsing (known STUN/TURN method IDs per RFC 5389 & RFC 5766)
         method_val = (msg_type & 0x000F) | ((msg_type & 0x00E0) >> 1) | ((msg_type & 0x3E00) >> 2)
-        methods = {
+        known_methods = {
             1: "Binding",
             3: "Allocate",
             4: "Refresh",
@@ -191,7 +187,10 @@ class StunFamilyMessage:
             9: "CreatePermission",
             10: "ChannelBind"
         }
-        self.method = methods.get(method_val, f"Method-{method_val}")
+        if method_val not in known_methods:
+            self.is_valid = False
+            return
+        self.method = known_methods[method_val]
         
         # Parse attributes
         offset = 20
@@ -351,17 +350,6 @@ class RtpParser:
         self.streams: Dict[int, RtpStream] = {}
         self.packet_count = 0
 
-    def parse_packet(self, raw: bytes, src_ip: str, src_port: int, dst_ip: str, dst_port: int, timestamp: float, local_ips: Set[str]):
-        if len(raw) < 12:
-            return
-        v_p_x_cc = raw[0]
-        version = (v_p_x_cc & 0xC0) >> 6
-        if version != 2:
-            return
-            
-        m_pt = raw[1]
-        payload_type = m_pt & 0x7F
-        
         # Standard dynamic range dynamic protocols check
         if not ((0 <= payload_type <= 34) or (96 <= payload_type <= 127)):
             return
@@ -408,7 +396,15 @@ class QuicDetector:
         is_long_header = bool(first_byte & 0x80)
         is_short_header = ((first_byte & 0xC0) == 0x40)
         
-        if is_long_header or is_short_header:
+        if is_long_header:
+            if len(raw) < 9:
+                return
+            version = struct.unpack_from(">I", raw, 1)[0]
+            if version == 0:  # Version Negotiation packet
+                return
+            self.quic_endpoints.add((src_ip, src_port))
+            self.quic_endpoints.add((dst_ip, dst_port))
+        elif is_short_header:
             self.quic_endpoints.add((src_ip, src_port))
             self.quic_endpoints.add((dst_ip, dst_port))
 
@@ -1045,57 +1041,5 @@ class OutputFormatter:
 
 
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description="Remote Participant Public IP Attribution Engine CLI")
-    parser.add_argument("pcap_path", help="Path to PCAP/PCAPNG file to analyze")
-    parser.add_argument("--sdp", help="Optional path to SDP file")
-    args = parser.parse_args()
-    
-    engine = AttributionEngine()
-    if args.sdp:
-        with open(args.sdp, "r", encoding="utf-8") as f:
-            engine.ingest_sdp(f.read())
-            
-    try:
-        from scapy.all import rdpcap, IP, IPv6, UDP, TCP, Raw
-        packets = rdpcap(args.pcap_path)
-    except Exception as exc:
-        print(f"Error loading scapy or PCAP file: {exc}")
-        sys.exit(1)
-        
-    for i, pkt in enumerate(packets):
-        src_ip = dst_ip = None
-        if IP in pkt:
-            src_ip = pkt[IP].src
-            dst_ip = pkt[IP].dst
-        elif IPv6 in pkt:
-            src_ip = pkt[IPv6].src
-            dst_ip = pkt[IPv6].dst
-            
-        if not src_ip or not dst_ip:
-            continue
-            
-        src_port = dst_port = None
-        if TCP in pkt:
-            src_port = int(pkt[TCP].sport)
-            dst_port = int(pkt[TCP].dport)
-        elif UDP in pkt:
-            src_port = int(pkt[UDP].sport)
-            dst_port = int(pkt[UDP].dport)
-            
-        if not src_port or not dst_port:
-            continue
-            
-        payload = bytes(pkt[Raw].load) if Raw in pkt else b""
-        timestamp = float(pkt.time)
-        
-        engine.ingest_packet(payload, src_ip, src_port, dst_ip, dst_port, timestamp)
-        
-    summary = engine.analyze()
-    print("=== ANALYSIS RESULTS ===")
-    print(OutputFormatter.format(summary, engine))
-    
-    evidence = OutputFormatter.format_evidence(summary, engine)
-    if evidence:
-        print("\n=== EVIDENCE TRAIL ===")
-        print(evidence)
+    from app.analysis.cli import main
+    main()

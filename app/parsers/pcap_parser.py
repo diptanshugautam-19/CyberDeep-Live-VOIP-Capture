@@ -121,9 +121,19 @@ class PcapParser(EvidenceParser):
                 }
             )
 
+        from app.analysis.attribution_engine import _is_private_ip
+
         for (src, dst, sport, dport, protocol), count in flows.items():
             sample = payload_samples.get((src, dst, sport, dport, protocol), {})
             macs = first_mac_seen.get((src, dst, sport, dport, protocol), (None, None))
+
+            # Resolve primary remote public IP
+            remote_pub_ip = None
+            if not _is_private_ip(dst):
+                remote_pub_ip = dst
+            elif not _is_private_ip(src):
+                remote_pub_ip = src
+
             yield ConnectionRecord(
                 source_ip=src,
                 destination_ip=dst,
@@ -225,12 +235,16 @@ def _payload_sample(
             "payload_hex": None,
         }
 
+    import hashlib
+    payload_hash = hashlib.md5(payload_bytes).hexdigest() if payload_bytes else None
+
     ascii_preview = _ascii_preview(payload_bytes)
     if ascii_preview:
         return {
             "payload_kind": "plaintext",
             "payload_preview": ascii_preview,
             "payload_hex": payload_bytes[:32].hex(" "),
+            "payload_hash": payload_hash,
         }
 
     if _looks_encrypted(payload_bytes, protocol, src_port, dst_port):
@@ -238,12 +252,14 @@ def _payload_sample(
             "payload_kind": "encrypted",
             "payload_preview": "Encrypted payload detected; ciphertext preview shown below",
             "payload_hex": payload_bytes[:64].hex(" "),
+            "payload_hash": payload_hash,
         }
 
     return {
         "payload_kind": "binary",
         "payload_preview": "Binary payload detected",
         "payload_hex": payload_bytes[:64].hex(" "),
+        "payload_hash": payload_hash,
     }
 
 

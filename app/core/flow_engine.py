@@ -3,10 +3,12 @@ import json
 import logging
 import asyncio
 import sqlite3
+from datetime import datetime, timezone
 from typing import Dict, Any, List, Tuple
 from app.storage.database import router, get_endpoint_id, compress_bytes, calculate_entropy
 from app.core.bridge import broadcast_manager
-from app.core.fingerprint import get_tls_fingerprints
+from app.core.fingerprint import get_tls_fingerprints, parse_ssh_hassh
+from app.flows.stream_reassembler import stream_reassembler, udp_reconstructor
 
 logger = logging.getLogger(__name__)
 
@@ -50,17 +52,14 @@ class FlowEngine:
         Tracks the TCP/UDP/ICMP flow of the incoming packet.
         Updates state and appends to batch buffer.
         """
-        src_ip = parsed_pkt.get("source_ip")
-        dst_ip = parsed_pkt.get("destination_ip")
+        src_ip = parsed_pkt.get("source_ip") or "0.0.0.0"
+        dst_ip = parsed_pkt.get("destination_ip") or "0.0.0.0"
         src_port = parsed_pkt.get("source_port") or 0
         dst_port = parsed_pkt.get("destination_port") or 0
         protocol = parsed_pkt.get("protocol", "IP")
         length = parsed_pkt.get("length", 0)
         timestamp = parsed_pkt.get("timestamp", time.time())
         tcp_flags = parsed_pkt.get("tcp_flags", "")
-
-        if not src_ip or not dst_ip:
-            return ""
 
         flow_key = make_flow_key(src_ip, dst_ip, src_port, dst_port, protocol)
         
@@ -72,37 +71,62 @@ class FlowEngine:
                 "flow_id": flow_key,
                 "investigation_id": "live_capture",
                 "protocol": protocol,
+                "source_ip": src_ip,
+                "destination_ip": dst_ip,
+                "source_port": src_port,
+                "destination_port": dst_port,
                 "start_time": timestamp,
                 "end_time": timestamp,
                 "bytes": length,
                 "packets": 1,
+                "c2s_bytes": length if src_ip < dst_ip else 0,
+                "s2c_bytes": length if src_ip >= dst_ip else 0,
+                "c2s_packets": 1 if src_ip < dst_ip else 0,
+                "s2c_packets": 1 if src_ip >= dst_ip else 0,
+                "rtt_ms": 0.0,
+                "entropy": 0.0,
+                "syn_timestamp": timestamp if (tcp_flags and "S" in tcp_flags.upper() and "A" not in tcp_flags.upper()) else None,
                 "jitter": 0.0,
                 "loss": 0.0,
-                "mos": 4.0,
+                "mos": None,  # Computed from jitter/loss when session closes; None until then
                 "classification": "Active Flow",
                 "tcp_state": "INIT",
                 "ja3_client": None,
                 "ja3_server": None,
                 "ja4_client": None,
-                "ja4_server": None
+                "ja4_server": None,
+                "hassh": None,
+                "hassh_server": None,
+                "quic_sni": None,
+                "quic_version": None
             }
         else:
             session = self.active_sessions[flow_key]
             session["end_time"] = timestamp
             session["bytes"] += length
             session["packets"] += 1
+            if src_ip < dst_ip:
+                session["c2s_bytes"] += length
+                session["c2s_packets"] += 1
+            else:
+                session["s2c_bytes"] += length
+                session["s2c_packets"] += 1
             
         session = self.active_sessions[flow_key]
         
-        # 2. Track TCP Handshake State Machine
+        # 2. Track TCP Handshake State Machine & RTT
         if protocol == "TCP" and tcp_flags:
             flags = tcp_flags.upper()
             state = session.get("tcp_state", "INIT")
             
             if "S" in flags and "A" not in flags:  # SYN
                 state = "SYN_SENT"
+                session["syn_timestamp"] = timestamp
             elif "S" in flags and "A" in flags:  # SYN-ACK
                 state = "SYN_RECEIVED"
+                if session.get("syn_timestamp"):
+                    rtt = (timestamp - session["syn_timestamp"]) * 1000.0
+                    session["rtt_ms"] = round(rtt, 2)
             elif "F" in flags:  # FIN
                 state = "FIN_WAIT"
             elif "R" in flags:  # RST
@@ -114,25 +138,57 @@ class FlowEngine:
             session["tcp_state"] = state
             session["classification"] = f"TCP {state}"
 
-        # 3. Process payload details
+        # 3. Process payload details, stream reassembly, & fingerprinting
         raw_bytes = parsed_pkt.get("raw_bytes") or b""
-        
-        # TLS fingerprinting
-        if protocol == "TCP" and raw_bytes:
-            fps = get_tls_fingerprints(raw_bytes)
-            if fps:
-                for k, v in fps.items():
-                    if k == "ja3":
-                        session["ja3_client"] = v
-                        session["classification"] = f"TLS Client (JA3: {v[:8]})"
-                    elif k == "ja3s":
-                        session["ja3_server"] = v
-                    elif k == "ja4":
-                        session["ja4_client"] = v
-                    elif k == "ja4s":
-                        session["ja4_server"] = v
+        if raw_bytes:
+            session["entropy"] = round(calculate_entropy(raw_bytes), 2)
+            
+            # Stream Reassembly Integration
+            if protocol == "TCP":
+                seq_num = parsed_pkt.get("seq_number")  # None if absent — do not default to 0 (corrupts reassembly)
+                is_c2s = (src_ip < dst_ip)  # Deterministic lexicographic heuristic; not semantic direction
+                if seq_num is not None:
+                    reassembled = stream_reassembler.process_segment(flow_key, is_c2s, seq_num, raw_bytes)
+                    target_payload = reassembled if reassembled else raw_bytes
+                else:
+                    target_payload = raw_bytes  # Skip reassembly if seq number unavailable
+            elif protocol == "UDP":
+                target_payload = udp_reconstructor.process_datagram(flow_key, raw_bytes)
+            else:
+                target_payload = raw_bytes
+
+            # TLS Fingerprinting
+            if protocol == "TCP":
+                fps = get_tls_fingerprints(target_payload)
+                if fps:
+                    for k, v in fps.items():
+                        if k == "ja3":
+                            session["ja3_client"] = v
+                            session["classification"] = f"TLS Client (JA3: {v[:8]})"
+                        elif k == "ja3s":
+                            session["ja3_server"] = v
+                        elif k == "ja4":
+                            session["ja4_client"] = v
+                        elif k == "ja4s":
+                            session["ja4_server"] = v
+
+                # SSH HASSH Fingerprinting
+                ssh_fps = parse_ssh_hassh(target_payload)
+                if ssh_fps:
+                    session["hassh"] = ssh_fps.get("hassh")
+                    session["hassh_server"] = ssh_fps.get("hassh_server")
+                    session["classification"] = f"SSH (HASSH: {ssh_fps.get('hassh', '')[:8]})"
+
+            # QUIC Decoding
+            elif protocol == "UDP" and (src_port == 443 or dst_port == 443):
+                from app.protocols.quic import parse_quic_packet
+                quic_info = parse_quic_packet(raw_bytes)
+                if quic_info:
+                    session["quic_sni"] = quic_info.get("sni")
+                    session["quic_version"] = quic_info.get("version_name")
+                    session["classification"] = f"QUIC {quic_info.get('version_name', '')}"
                 
-        # Buffer session metadata for 2-second persistence
+        # Buffer session metadata for persistence
         self.session_buffer[flow_key] = session.copy()
         
         # 4. Process payload persistence
@@ -143,17 +199,6 @@ class FlowEngine:
         # Compress and calculate entropy
         compressed = compress_bytes(raw_bytes)
         entropy = calculate_entropy(raw_bytes)
-        
-        # Save placeholder for executemany
-        # We need packet_id, which we'll handle at write time or insert auto-incrementing
-        # Since payloads requires packet_id, we insert packets first, then get their IDs, or we write them to live_capture_packets.
-        # Note: the plan says "writes flow metadata into flows.sqlite3 and raw payloads into payloads.sqlite3 in WAL mode using 2-second batch inserts."
-        # We write flow sessions to flows.sqlite3 ('sessions' table).
-        # We write payloads to payloads.sqlite3 ('payloads' table) or flows.sqlite3.
-        # Wait, the DatabaseRouter routes 'payloads' to payloads.sqlite3 and 'sessions' to flows.sqlite3.
-        # Since 'payloads' has a 'packet_id' foreign key, during live capture, we can map packets to packets.sqlite3, 
-        # and payloads to payloads.sqlite3 using the same sequence.
-        # Let's save packet structure in memory buffer
         src_id = get_endpoint_id(src_ip, parsed_pkt.get("source_mac"))
         dst_id = get_endpoint_id(dst_ip, parsed_pkt.get("destination_mac"))
         
@@ -185,21 +230,30 @@ class FlowEngine:
         ))
 
         # 5. Broadcast standard record to WebSockets (Priority 3)
-        asyncio.create_task(broadcast_manager.broadcast({
-            "type": "packet",
-            "flow_id": flow_key,
-            "source_ip": src_ip,
-            "destination_ip": dst_ip,
-            "source_port": src_port,
-            "destination_port": dst_port,
-            "protocol": protocol,
-            "length": length,
-            "timestamp": timestamp,
-            "summary": parsed_pkt.get("summary", ""),
-            "tcp_flags": tcp_flags,
-            "payload_preview": payload_preview,
-            "tcp_state": session.get("tcp_state", "")
-        }, priority=3))
+        # process_packet runs on the sniffer thread; use call_soon_threadsafe to schedule
+        # coroutines from the async event loop safely.
+        try:
+            loop = asyncio.get_running_loop()
+            loop.call_soon_threadsafe(
+                loop.create_task,
+                broadcast_manager.broadcast({
+                    "type": "packet",
+                    "flow_id": flow_key,
+                    "source_ip": src_ip,
+                    "destination_ip": dst_ip,
+                    "source_port": src_port,
+                    "destination_port": dst_port,
+                    "protocol": protocol,
+                    "length": length,
+                    "timestamp": timestamp,
+                    "summary": parsed_pkt.get("summary", ""),
+                    "tcp_flags": tcp_flags,
+                    "payload_preview": payload_preview,
+                    "tcp_state": session.get("tcp_state", "")
+                }, priority=3)
+            )
+        except RuntimeError:
+            pass  # No running event loop (called from sync context) — skip broadcast
         
         return flow_key
 
@@ -253,33 +307,37 @@ class FlowEngine:
                             ]
                         )
 
-                    # 2. Write Packets to packets.sqlite3
+                    # 2. Write Packets to packets.sqlite3 with exact packet_id tracking
                     if packets_to_write:
-                        # Write packets and retrieve auto-generated IDs
                         db_path = router.table_map["packets"]
+                        inserted_packet_ids = []
                         with router._get_connection(db_path) as conn:
-                            cursor = conn.execute("SELECT COALESCE(MAX(id), 0) FROM packets")
-                            base_packet_id = cursor.fetchone()[0] + 1
-                            conn.executemany(
-                                """INSERT INTO packets 
-                                (investigation_id, packet_index, timestamp, length, protocol, src_endpoint_id, dst_endpoint_id, source_port, destination_port, tcp_flags, flow_id, summary) 
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                                packets_to_write
-                            )
+                            for row in packets_to_write:
+                                cur = conn.execute(
+                                    """INSERT INTO packets 
+                                    (investigation_id, packet_index, timestamp, length, protocol, src_endpoint_id, dst_endpoint_id, source_port, destination_port, tcp_flags, flow_id, summary) 
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
+                                    row
+                                )
+                                inserted_packet_ids.append(cur.fetchone()[0])
                             conn.commit()
 
-                        # 3. Write Payloads to payloads.sqlite3 with the foreign key packet_id
+                        # 3. Write Payloads to payloads.sqlite3 linked strictly to confirmed packet_ids
                         if payloads_to_write:
-                            payload_rows_linked = [
-                                (base_packet_id + i, *pl)
-                                for i, pl in enumerate(payloads_to_write)
-                            ]
-                            router.executemany(
-                                """INSERT INTO payloads 
-                                (packet_id, investigation_id, packet_index, payload_blob, payload_preview, mime_type, decoded_json, compression, entropy) 
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                                payload_rows_linked
-                            )
+                            if len(inserted_packet_ids) == len(payloads_to_write):
+                                payload_rows_linked = [
+                                    (inserted_packet_ids[i], *pl)
+                                    for i, pl in enumerate(payloads_to_write)
+                                ]
+                                router.executemany(
+                                    "payloads",
+                                    """INSERT INTO payloads 
+                                    (packet_id, investigation_id, packet_index, payload_blob, payload_preview, mime_type, decoded_json, compression, entropy) 
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                    payload_rows_linked
+                                )
+                            else:
+                                logger.error(f"Flow batch insertion mismatch: {len(inserted_packet_ids)} packets vs {len(payloads_to_write)} payloads. Payloads omitted to prevent orphan FK records.")
                     success = True
                     break
                 except sqlite3.OperationalError as e:
@@ -309,7 +367,7 @@ class FlowEngine:
                     logger.info("SQLite persistence recovered successfully")
 
 def datetime_iso(ts: float) -> str:
-    from datetime import datetime, timezone
+    """Convert a Unix timestamp to an ISO-8601 UTC string."""
     return datetime.fromtimestamp(ts, timezone.utc).isoformat()
 
 # Singleton

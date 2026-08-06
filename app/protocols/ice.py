@@ -260,13 +260,25 @@ class IPExtractionStore:
 
     def get_by_category(self) -> Dict[str, Optional[str]]:
         """
-        Returns first IP seen for each output category, mirroring print_report().
+        Returns highest-priority IP seen for each output category, preferring public WAN IPs over LAN IPs.
         """
         found: Dict[str, Optional[str]] = {}
         for ip_obj in self.extracted_ips:
             for label, sources in self.CATEGORIES.items():
-                if ip_obj.source in sources and label not in found:
-                    found[label] = ip_obj.ip
+                if ip_obj.source in sources:
+                    current_val = found.get(label)
+                    # If category is empty, set it
+                    if not current_val:
+                        found[label] = ip_obj.ip
+                    else:
+                        # Upgrade from private to public IP if a public IP is discovered
+                        try:
+                            curr_is_priv = ipaddress.ip_address(current_val).is_private
+                            new_is_priv = ipaddress.ip_address(ip_obj.ip).is_private
+                            if curr_is_priv and not new_is_priv:
+                                found[label] = ip_obj.ip
+                        except Exception:
+                            pass
         return found
 
     def get_nominated_ips(self) -> List[ExtractedIP]:

@@ -191,6 +191,8 @@ SCHEMAS = {
             country TEXT,
             city TEXT,
             asn TEXT,
+            isp TEXT,
+            asn_org TEXT,
             latitude REAL,
             longitude REAL,
             updated_at TEXT NOT NULL,
@@ -563,7 +565,7 @@ def save_investigation(filename: str, analysis: dict) -> str:
             anomaly.get("flow_id") or "global",
             anomaly.get("packet_index"),
             anomaly.get("severity", "Medium"),
-            anomaly.get("name", "Unknown Alert"),
+            anomaly.get("name") or anomaly.get("title") or anomaly.get("description") or "Security Anomaly",
             anomaly.get("confidence", 1.0),
             created_at_str,
             "New",
@@ -637,24 +639,30 @@ def save_investigation(filename: str, analysis: dict) -> str:
         if pkt["protocol"] == "SIP" and prev:
             sip_list.append(prev)
 
-    # Perform batch writes to packets database and capture starting ID
+    # Perform batch writes to packets database with exact RETURNING id tracking
+    inserted_packet_ids = []
     with router._get_connection(PACKETS_DB_PATH) as conn:
-        cursor = conn.execute("SELECT COALESCE(MAX(id), 0) FROM packets")
-        base_packet_id = cursor.fetchone()[0] + 1
-        conn.executemany(
-            "INSERT INTO packets (investigation_id, packet_index, timestamp, length, protocol, src_endpoint_id, dst_endpoint_id, source_port, destination_port, tcp_flags, flow_id, summary) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            packets_to_insert
-        )
-        
-    # Write payloads with explicit packet_id FK
-    with router._get_connection(PAYLOADS_DB_PATH) as conn:
-        conn.executemany(
-            "INSERT INTO payloads (packet_id, investigation_id, packet_index, payload_blob, payload_preview, mime_type, decoded_json, compression, entropy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [
-                (base_packet_id + i, *pl)
-                for i, pl in enumerate(payloads_to_insert)
-            ]
-        )
+        cursor = conn.cursor()
+        for pkt_row in packets_to_insert:
+            cursor.execute(
+                "INSERT INTO packets (investigation_id, packet_index, timestamp, length, protocol, src_endpoint_id, dst_endpoint_id, source_port, destination_port, tcp_flags, flow_id, summary) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+                pkt_row
+            )
+            inserted_packet_ids.append(cursor.fetchone()[0])
+        conn.commit()
+
+    # Write payloads linked strictly to confirmed packet IDs
+    if len(inserted_packet_ids) == len(payloads_to_insert):
+        with router._get_connection(PAYLOADS_DB_PATH) as conn:
+            conn.executemany(
+                "INSERT INTO payloads (packet_id, investigation_id, packet_index, payload_blob, payload_preview, mime_type, decoded_json, compression, entropy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (inserted_packet_ids[i], *pl)
+                    for i, pl in enumerate(payloads_to_insert)
+                ]
+            )
+    else:
+        logger.error(f"Packet insertion count ({len(inserted_packet_ids)}) did not match payload count ({len(payloads_to_insert)}) for investigation {investigation_id}. Payload insertion aborted to maintain referential integrity.")
 
     # 5. Populate Full-Text Search Table
     with router._get_connection(INVESTIGATIONS_DB_PATH) as conn:

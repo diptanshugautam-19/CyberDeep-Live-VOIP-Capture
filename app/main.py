@@ -900,47 +900,7 @@ def _decode_packet_fields(pkt: dict) -> dict:
     return fields
 
 
-# ── CIF Threat Intelligence API ─────────────────────────────────────
-from app.threat_intel.manager import ThreatIntelManager
 
-_threat_mgr = ThreatIntelManager()
-
-
-@app.get("/api/threat_intel/lookup")
-async def threat_intel_lookup(indicator: str):
-    """Multi-indicator threat intelligence lookup (IP, domain, URL, hash).
-    Auto-detects indicator type and queries all CIF feeds."""
-    return _threat_mgr.lookup_indicator(indicator)
-
-
-@app.get("/api/threat_intel/lookup/ip")
-async def threat_intel_lookup_ip(ip: str):
-    """IP-specific threat intelligence lookup."""
-    return _threat_mgr.cif.lookup_ip(ip)
-
-
-@app.get("/api/threat_intel/lookup/domain")
-async def threat_intel_lookup_domain(domain: str):
-    """Domain-specific threat intelligence lookup."""
-    return _threat_mgr.cif.lookup_domain(domain)
-
-
-@app.get("/api/threat_intel/lookup/url")
-async def threat_intel_lookup_url(url: str):
-    """URL-specific threat intelligence lookup."""
-    return _threat_mgr.cif.lookup_url(url)
-
-
-@app.get("/api/threat_intel/lookup/hash")
-async def threat_intel_lookup_hash(hash: str):
-    """Hash-specific threat intelligence lookup (MD5/SHA256)."""
-    return _threat_mgr.cif.lookup_hash(hash)
-
-
-@app.get("/api/threat_intel/status")
-async def threat_intel_status():
-    """CIF feed sync status and health dashboard data."""
-    return _threat_mgr.get_cif_status()
 
 
 @app.get("/api/geoip/lookup")
@@ -989,134 +949,53 @@ async def geoip_lookup(ip: str):
         "mobile": False,
     }
 
-
-# ── Subdomain Scanner (Sublist3r) API ───────────────────────────────
-from app.subdomain_scanner import SubdomainScanner
-
-_subdomain_scanner = SubdomainScanner()
-
-
-@app.post("/api/subdomain/scan")
-async def subdomain_scan_start(domain: str, engines: str = None, demo: bool = False):
-    """Start a new subdomain enumeration scan."""
-    scan_id = _subdomain_scanner.start_scan(domain, engines=engines, use_demo=demo)
-    return {"scan_id": scan_id, "status": "running", "domain": domain}
-
-
-@app.get("/api/subdomain/scan/{scan_id}")
-async def subdomain_scan_status(scan_id: str):
-    """Get scan status and results."""
-    scan = _subdomain_scanner.get_scan(scan_id)
-    if not scan:
-        return {"error": "Scan not found"}
-    return scan
-
-
-@app.get("/api/subdomain/scans")
-async def subdomain_scan_list():
-    """List all scans."""
-    return _subdomain_scanner.list_scans()
-
-
-@app.get("/api/subdomain/engines")
-async def subdomain_engines():
-    """Get available enumeration engines."""
-    return SubdomainScanner.get_engines()
-
-
-# ── TShark MCP Integration APIs ────────────────────────────────────
-import shutil
-from app.integrations.tshark_mcp.service import tshark_mcp_service
-
-
-def _get_session_or_404(session_id: str) -> dict:
-    rows = router.execute("investigations", "SELECT case_json FROM investigations WHERE id = ?", (session_id,))
-    if not rows:
-        raise HTTPException(status_code=404, detail="Investigation session not found.")
-    return json.loads(rows[0]["case_json"])
-
-@app.post("/api/mcp/analyze")
-async def mcp_analyze(file: UploadFile = None, pcap_path: str = None):
-    if file:
-        file_id = str(uuid.uuid4())
-        dest_pcap = UPLOAD_DIR / f"{file_id}_{file.filename}"
-        with open(dest_pcap, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        pcap_path = str(dest_pcap)
-    elif not pcap_path:
-        raise HTTPException(status_code=400, detail="Either file upload or local pcap_path must be provided.")
-    
+@app.post("/api/system/restart")
+async def restart_system():
+    """Restart server engines (FlowEngine, EnrichmentEngine, PacketBridge) and auto-resume capture if running."""
     try:
-        session = await tshark_mcp_service.analyze_file(pcap_path)
-        return session
+        was_capturing = capture_manager.is_capturing
+        active_iface = getattr(capture_manager, 'interface', 'any') or 'any'
+        active_bpf = getattr(capture_manager, 'bpf_filter', '') or ''
+        active_filter_priv = getattr(capture_manager, 'filter_private', False)
+        
+        # Stop capture if active
+        if was_capturing:
+            capture_manager.stop_capture()
+        
+        # Flush & stop engines
+        await flow_engine.stop()
+        await enrichment_engine.stop()
+        packet_bridge.stop()
+        
+        # Reset memory state
+        flow_engine.active_sessions.clear()
+        flow_engine.session_buffer.clear()
+        flow_engine.payload_buffer.clear()
+        flow_engine.packet_buffer.clear()
+        enrichment_engine.seen_ips.clear()
+        enrichment_engine.connection_counts.clear()
+        
+        # Restart engines
+        flow_engine.start()
+        enrichment_engine.start()
+        packet_bridge.start(asyncio.get_event_loop())
+        
+        # Auto-resume capture if it was active before restart
+        if was_capturing:
+            capture_manager.start_capture(
+                interface=active_iface,
+                bpf_filter=active_bpf,
+                filter_private=active_filter_priv
+            )
+            logger.info(f"System server components restarted and live capture automatically resumed on {active_iface}")
+            return {"status": "success", "message": "Server restarted and live capture resumed successfully", "capturing_resumed": True}
+        
+        logger.info("System server components restarted & re-initialized successfully")
+        return {"status": "success", "message": "Server engines restarted successfully", "capturing_resumed": False}
     except Exception as e:
-        logger.error(f"Analysis failed: {e}")
+        logger.error(f"Error restarting server components: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/mcp/status")
-async def mcp_status():
-    tshark_exists = os.path.exists(r"D:\Wireshark\tshark.exe")
-    return {
-        "status": "online" if tshark_exists else "offline",
-        "tshark_path": r"D:\Wireshark\tshark.exe",
-        "tshark_available": tshark_exists
-    }
-
-
-@app.get("/api/mcp/sip")
-async def mcp_sip(session_id: str):
-    session = _get_session_or_404(session_id)
-    return {"sip_calls": session.get("sip_calls", [])}
-
-@app.get("/api/mcp/stun")
-async def mcp_stun(session_id: str):
-    session = _get_session_or_404(session_id)
-    return {"stun_transactions": session.get("stun_transactions", [])}
-
-@app.get("/api/mcp/turn")
-async def mcp_turn(session_id: str):
-    session = _get_session_or_404(session_id)
-    return {"turn_allocations": session.get("turn_allocations", [])}
-
-@app.get("/api/mcp/ice")
-async def mcp_ice(session_id: str):
-    session = _get_session_or_404(session_id)
-    return {"ice_sessions": session.get("ice_sessions", [])}
-
-@app.get("/api/mcp/rtp")
-async def mcp_rtp(session_id: str):
-    session = _get_session_or_404(session_id)
-    return {"rtp_sessions": session.get("rtp_sessions", [])}
-
-@app.get("/api/mcp/rtcp")
-async def mcp_rtcp(session_id: str):
-    return {"rtcp_sessions": []}
-
-@app.get("/api/mcp/report")
-async def mcp_report(session_id: str):
-    session = _get_session_or_404(session_id)
-    return {
-        "session_id": session_id,
-        "sip_count": len(session.get("sip_calls", [])),
-        "rtp_count": len(session.get("rtp_sessions", [])),
-        "ice_count": len(session.get("ice_sessions", [])),
-        "endpoints_count": len(session.get("endpoints", [])),
-        "conversations_count": len(session.get("conversations", []))
-    }
-
-@app.get("/api/mcp/timeline")
-async def mcp_timeline(session_id: str):
-    session = _get_session_or_404(session_id)
-    return {"timeline": session.get("timeline", [])}
-
-@app.get("/api/mcp/protocols")
-async def mcp_protocols(session_id: str):
-    session = _get_session_or_404(session_id)
-    proto_counts = {}
-    for p in session.get("timeline", []):
-        proto = p.get("protocol", "UNKNOWN")
-        proto_counts[proto] = proto_counts.get(proto, 0) + 1
-    return {"protocols": [{"protocol": k, "count": v} for k, v in proto_counts.items()]}
 
 # ── Static file mounts (MUST be after all route definitions) ────────
 # Serve data/ directory (police_stations_master.csv, etc.)

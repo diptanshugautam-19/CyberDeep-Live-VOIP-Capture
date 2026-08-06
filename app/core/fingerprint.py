@@ -128,6 +128,17 @@ def parse_tls_client_hello(payload: bytes) -> Optional[Dict[str, str]]:
                                     first_proto = ext_val[3:3+first_proto_len].decode('utf-8', errors='replace')
                                     alpn_val = first_proto[:2].ljust(2, '0')[:2]
                                     
+                    # Supported Versions (Extension 43 / 0x002B)
+                    elif ext_type == 43:
+                        if len(ext_val) >= 2:
+                            versions_len = ext_val[0]
+                            versions_data = ext_val[1:1+versions_len]
+                            for v_idx in range(0, len(versions_data), 2):
+                                if v_idx + 2 <= len(versions_data):
+                                    supp_ver = struct.unpack("!H", versions_data[v_idx:v_idx+2])[0]
+                                    if not is_grease(supp_ver) and supp_ver > tls_version:
+                                        tls_version = supp_ver
+
                     idx = val_start + ext_len
 
         # 1. JA3 Client Fingerprint
@@ -267,3 +278,60 @@ def get_tls_fingerprints(payload: bytes) -> Dict[str, str]:
         fingerprints.update(server_res)
         
     return fingerprints
+
+def parse_ssh_hassh(payload: bytes) -> Optional[Dict[str, str]]:
+    """
+    Parses SSH KEXINIT payload to calculate HASSH (Client) or HASSHServer (Server) fingerprints.
+    HASSH format: MD5(kex_algorithms;encryption_algorithms;mac_algorithms;compression_algorithms)
+    """
+    try:
+        if len(payload) < 20 or not (payload.startswith(b"SSH-") or payload[0] == 20):
+            return None
+
+        # Handle SSH Key Exchange Init (packet type 20)
+        idx = payload.find(b"\x14")  # 0x14 = 20 (SSH_MSG_KEXINIT)
+        if idx == -1 or idx + 17 > len(payload):
+            return None
+
+        offset = idx + 1 + 16  # Skip msg type (1 byte) + cookie (16 bytes)
+
+        def read_ssh_string(buf: bytes, off: int) -> tuple[str, int]:
+            if off + 4 > len(buf):
+                return "", off
+            str_len = struct.unpack("!I", buf[off:off+4])[0]
+            off += 4
+            if str_len > 8192 or off + str_len > len(buf):
+                return "", off
+            s = buf[off:off+str_len].decode("utf-8", errors="ignore")
+            return s, off + str_len
+
+        kex_algo, offset = read_ssh_string(payload, offset)
+        server_host_key_algo, offset = read_ssh_string(payload, offset)
+        enc_c2s, offset = read_ssh_string(payload, offset)
+        enc_s2c, offset = read_ssh_string(payload, offset)
+        mac_c2s, offset = read_ssh_string(payload, offset)
+        mac_s2c, offset = read_ssh_string(payload, offset)
+        comp_c2s, offset = read_ssh_string(payload, offset)
+        comp_s2c, offset = read_ssh_string(payload, offset)
+
+        if not kex_algo or not enc_c2s:
+            return None
+
+        # Build Client HASSH
+        hassh_raw = f"{kex_algo};{enc_c2s};{mac_c2s};{comp_c2s}"
+        hassh = hashlib.md5(hassh_raw.encode("utf-8")).hexdigest()
+
+        # Build Server HASSHServer
+        hassh_server_raw = f"{kex_algo};{enc_s2c};{mac_s2c};{comp_s2c}"
+        hassh_server = hashlib.md5(hassh_server_raw.encode("utf-8")).hexdigest()
+
+        return {
+            "hassh": hassh,
+            "hassh_server": hassh_server,
+            "ssh_kex": kex_algo,
+            "ssh_enc": enc_c2s
+        }
+    except Exception as e:
+        logger.debug(f"Error parsing SSH HASSH: {e}")
+        return None
+

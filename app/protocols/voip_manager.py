@@ -22,6 +22,7 @@ from app.protocols.tls_parser import extract_sni
 from app.protocols.dns import parse_dns_payload
 from app.analysis.attribution import build_call_attribution
 from app.analysis.graph_hooks import voip_session_to_graph
+from app.analysis.attribution_engine import _is_bogon_or_invalid
 from app.storage.database import router
 from app.core.bridge import broadcast_manager
 
@@ -42,6 +43,9 @@ class LiveVoipManager:
         # Ufrag -> call_id mapping (populated from SDP a=ice-ufrag and STUN USERNAME)
         self.ufrag_to_call: Dict[str, str] = {}
 
+        # O(1) Endpoint lookup: (ip, port) -> call_id
+        self.endpoint_index: Dict[Tuple[str, int], str] = {}
+
         # Raw packet logs for attribution (grouped by call_id)
         self.stun_logs: Dict[str, List[dict]] = {}
         self.rtp_logs: Dict[str, List[dict]] = {}
@@ -55,6 +59,9 @@ class LiveVoipManager:
 
         # Session last-activity timestamps for timeout cleanup
         self.last_activity: Dict[str, float] = {}
+
+        # Session last-broadcast timestamps to throttle RTP WebSocket updates (max 1/sec)
+        self.last_broadcast_time: Dict[str, float] = {}
 
         # ---- Production WebRTC Capture Engine v3 additions ----
 
@@ -106,28 +113,37 @@ class LiveVoipManager:
                 self.rtp_logs.pop(cid, None)
                 self.sip_logs.pop(cid, None)
                 self.last_activity.pop(cid, None)
-                # Clean up ssrc and ufrag reverse maps
-                self.ssrc_to_call = {
-                    k: v for k, v in self.ssrc_to_call.items() if v != cid
-                }
-                self.ufrag_to_call = {
-                    k: v for k, v in self.ufrag_to_call.items() if v != cid
-                }
+                self.last_broadcast_time.pop(cid, None)
+
+            # Delete specific expired keys from ssrc_to_call and ufrag_to_call
+            ssrcs_to_del = [k for k, v in self.ssrc_to_call.items() if v in expired]
+            for k in ssrcs_to_del:
+                del self.ssrc_to_call[k]
+
+            ufrags_to_del = [k for k, v in self.ufrag_to_call.items() if v in expired]
+            for k in ufrags_to_del:
+                del self.ufrag_to_call[k]
+
+            endpoints_to_del = [k for k, v in self.endpoint_index.items() if v in expired]
+            for k in endpoints_to_del:
+                del self.endpoint_index[k]
+
             if expired:
                 logger.info(f"Expired {len(expired)} inactive VoIP sessions")
 
     async def process_packet(self, parsed_pkt: dict):
         """Processes a packet from the live stream for VoIP session tracking."""
-        protocol = parsed_pkt.get("protocol")
-        raw_bytes = parsed_pkt.get("payload") or b""
-        timestamp = parsed_pkt.get("timestamp", time.time())
-        src_ip = parsed_pkt.get("source_ip")
-        dst_ip = parsed_pkt.get("destination_ip")
-        src_port = parsed_pkt.get("source_port")
-        dst_port = parsed_pkt.get("destination_port")
+        async with self.lock:
+            protocol = parsed_pkt.get("protocol")
+            raw_bytes = parsed_pkt.get("payload") or b""
+            timestamp = parsed_pkt.get("timestamp", time.time())
+            src_ip = parsed_pkt.get("source_ip")
+            dst_ip = parsed_pkt.get("destination_ip")
+            src_port = parsed_pkt.get("source_port")
+            dst_port = parsed_pkt.get("destination_port")
 
-        if not raw_bytes:
-            return
+            if not raw_bytes:
+                return
 
         # ---- TCP stream reassembly (RFC 4571 / WebSocket / SIP-over-TCP) ----
         # Handles all media-bearing TCP flows from ProductionWebRTCCaptureEngine v3
@@ -182,10 +198,29 @@ class LiveVoipManager:
                     else:
                         call_id = f"stun_txn_{decoded.get('transaction_id', '')}"
 
-                # ---- ICE nomination tracking (engine v3) ----
+                # ---- ICE nomination tracking & immediate IP store extraction ----
                 self._handle_stun_ice(
                     raw_bytes, decoded, call_id, src_ip, src_port, dst_ip, dst_port
                 )
+
+                # Always record STUN packet source IP (peer candidate)
+                if src_ip:
+                    self.ip_store.add_ip(
+                        'ice_candidate_prflx', src_ip, src_port,
+                        6 if ':' in src_ip else 4,
+                        f"STUN packet peer source ({decoded.get('message_name', 'STUN')})",
+                        'high', call_id
+                    )
+
+                # Always record decoded XOR-MAPPED or MAPPED address if present in packet
+                xm = decoded.get('xor_mapped_address') or decoded.get('mapped_address')
+                if xm and isinstance(xm, dict) and xm.get('ip'):
+                    self.ip_store.add_ip(
+                        'ice_binding_response', xm['ip'], xm.get('port', 0),
+                        6 if ':' in xm['ip'] else 4,
+                        f"STUN mapped public WAN address",
+                        'high', call_id
+                    )
 
         elif protocol == "TURN" or src_port in (3478, 5349, 19302) or dst_port in (3478, 5349, 19302):
             # ---- TURN allocation tracking (engine v3) ----
@@ -280,10 +315,9 @@ class LiveVoipManager:
                 self.sni_cache[key] = sni
             return  # TLS packets are not VoIP sessions, just enrich the cache
 
-        if not call_id:
-            return
+            if not call_id:
+                return
 
-        async with self.lock:
             # Update last-activity timestamp
             self.last_activity[call_id] = time.time()
 
@@ -319,11 +353,15 @@ class LiveVoipManager:
 
             if voip_type == "SIP" and decoded:
                 self.sip_logs[call_id].append(decoded)
-                # Parse caller/callee from SIP headers
+                # Parse caller/callee from SIP headers and index endpoints
                 if not session.caller.ufrag or session.caller.ufrag == "caller":
                     session.caller = EndpointIdentity(ufrag="caller", ip=src_ip, port=src_port)
+                    if src_ip and src_port:
+                        self.endpoint_index[(src_ip, src_port)] = call_id
                 if not session.callee.ufrag or session.callee.ufrag == "callee":
                     session.callee = EndpointIdentity(ufrag="callee", ip=dst_ip, port=dst_port)
+                    if dst_ip and dst_port:
+                        self.endpoint_index[(dst_ip, dst_port)] = call_id
 
             elif voip_type in ("STUN", "TURN") and decoded:
                 self.stun_logs[call_id].append(decoded)
@@ -371,10 +409,15 @@ class LiveVoipManager:
             else:
                 confidence_tier = "direct"
 
-            # --- 5. Persist to SQLite ---
-            self._persist_voip_session(session, joined_mid, confidence_tier)
+            # --- 5. Persist to SQLite offloaded to worker thread ---
+            await asyncio.to_thread(self._persist_voip_session_sync, session, joined_mid, confidence_tier)
 
-            # --- 6. Broadcast VoIP status to WebSockets (Priority 1) ---
+            # --- 6. Broadcast VoIP status to WebSockets (Throttled for RTP) ---
+            now_ts = time.time()
+            last_bc = self.last_broadcast_time.get(call_id, 0.0)
+            if voip_type == "RTP" and (now_ts - last_bc < 1.0):
+                return  # Throttle RTP broadcast to max 1 update per second
+            self.last_broadcast_time[call_id] = now_ts
             graph_data = voip_session_to_graph(session)
 
             # Enrich with DNS/SNI hostnames
@@ -451,30 +494,30 @@ class LiveVoipManager:
         return self.dns_cache.get(ip, "")
 
     def _match_call_by_endpoints(self, src: str, dst: str, sport: int, dport: int) -> str | None:
-        """Finds an active call matching endpoints (IPs and ports)."""
-        for cid, call in self.active_calls.items():
-            if (call.caller.ip == src and call.caller.port == sport) or \
-               (call.caller.ip == dst and call.caller.port == dport):
-                return cid
-            if (call.callee.ip == src and call.callee.port == sport) or \
-               (call.callee.ip == dst and call.callee.port == dport):
-                return cid
+        """O(1) lookup of active call by endpoints."""
+        if src and sport and (src, sport) in self.endpoint_index:
+            return self.endpoint_index[(src, sport)]
+        if dst and dport and (dst, dport) in self.endpoint_index:
+            return self.endpoint_index[(dst, dport)]
         return None
 
-    def _persist_voip_session(self, session: VoipSession, joined_mid: bool, confidence_tier: str):
-        """Writes VoIP metadata into flows.sqlite3 tables."""
+    def _persist_voip_session_sync(self, session: VoipSession, joined_mid: bool, confidence_tier: str):
+        """Synchronous worker function to write VoIP metadata into flows.sqlite3 tables using modern UPSERT syntax."""
         try:
-            # 1. Update sip_dialogs
+            # 1. Update sip_dialogs using ON CONFLICT UPSERT
             router.execute(
                 "sip_dialogs",
-                """INSERT OR REPLACE INTO sip_dialogs 
-                (id, call_id, from_uri, to_uri, method, status_code, user_agent, sdp_media_ip, sdp_media_port, joined_mid_session, confidence_tier)
-                VALUES (
-                    (SELECT id FROM sip_dialogs WHERE call_id = ?), 
-                    ?, ?, ?, 'INVITE', '200 OK', 'Live Agent', ?, ?, ?, ?
-                )""",
+                """INSERT INTO sip_dialogs 
+                (call_id, from_uri, to_uri, method, status_code, user_agent, sdp_media_ip, sdp_media_port, joined_mid_session, confidence_tier)
+                VALUES (?, ?, ?, 'INVITE', '200 OK', 'Live Agent', ?, ?, ?, ?)
+                ON CONFLICT(call_id) DO UPDATE SET
+                    from_uri = excluded.from_uri,
+                    to_uri = excluded.to_uri,
+                    sdp_media_ip = excluded.sdp_media_ip,
+                    sdp_media_port = excluded.sdp_media_port,
+                    joined_mid_session = excluded.joined_mid_session,
+                    confidence_tier = excluded.confidence_tier""",
                 (
-                    session.call_id,
                     session.call_id,
                     session.caller.ufrag or "caller",
                     session.callee.ufrag or "callee",
@@ -489,15 +532,16 @@ class LiveVoipManager:
             for stream in session.media_streams:
                 router.execute(
                     "rtp_streams",
-                    """INSERT OR REPLACE INTO rtp_streams 
-                    (id, session_flow_id, ssrc, payload_type, packet_count, jitter, loss, mos)
-                    VALUES (
-                        (SELECT id FROM rtp_streams WHERE session_flow_id = ? AND ssrc = ?),
-                        ?, ?, ?, ?, ?, ?, ?
-                    )""",
+                    """INSERT INTO rtp_streams 
+                    (session_flow_id, ssrc, payload_type, packet_count, jitter, loss, mos)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(session_flow_id, ssrc) DO UPDATE SET
+                        payload_type = excluded.payload_type,
+                        packet_count = excluded.packet_count,
+                        jitter = excluded.jitter,
+                        loss = excluded.loss,
+                        mos = excluded.mos""",
                     (
-                        session.call_id,
-                        stream.ssrc,
                         session.call_id,
                         stream.ssrc,
                         stream.payload_type,
@@ -512,19 +556,17 @@ class LiveVoipManager:
             for srv in session.turn_servers:
                 router.execute(
                     "ice_sessions",
-                    """INSERT OR REPLACE INTO ice_sessions 
-                    (id, session_flow_id, ufrag, state, candidate_type, relay_server, nat_type_guess, joined_mid_session, confidence_tier)
-                    VALUES (
-                        (SELECT id FROM ice_sessions WHERE session_flow_id = ? AND relay_server = ?),
-                        ?, ?, ?, ?, ?, 'unknown', ?, ?
-                    )""",
+                    """INSERT INTO ice_sessions 
+                    (session_flow_id, ufrag, state, candidate_type, relay_server, nat_type_guess, joined_mid_session, confidence_tier)
+                    VALUES (?, ?, 'CONNECTED', 'relay', ?, 'unknown', ?, ?)
+                    ON CONFLICT(session_flow_id, relay_server) DO UPDATE SET
+                        ufrag = excluded.ufrag,
+                        state = excluded.state,
+                        joined_mid_session = excluded.joined_mid_session,
+                        confidence_tier = excluded.confidence_tier""",
                     (
                         session.call_id,
-                        srv,
-                        session.call_id,
                         session.caller.ufrag or "caller",
-                        "CONNECTED",
-                        "relay",
                         srv,
                         1 if joined_mid else 0,
                         confidence_tier
@@ -702,6 +744,44 @@ class LiveVoipManager:
             "remote_port": pair.remote_candidate.port,
             "succeeded":  pair.succeeded,
         }
+
+    def get_top_remote_public_ip(self) -> Optional[dict]:
+        """
+        Evaluates extracted session IPs and returns the highest-confidence remote public IP.
+        """
+        from app.analysis.attribution_engine import _is_private_ip
+        # Category preference order
+        priority_sources = [
+            "ice_candidate_srflx", "ice_candidate_prflx",
+            "turn_xor_mapped_client", "turn_client_real",
+            "ice_binding_response", "rtp_udp", "sip_contact", "sip_via", "sdp_c_line"
+        ]
+
+        for source in priority_sources:
+            for entry in reversed(self.ip_store.extracted_ips):
+                if entry.source == source:
+                    ip = entry.ip
+                    if ip and not _is_private_ip(ip):
+                        return {
+                            "ip": ip,
+                            "port": entry.port,
+                            "source": entry.source,
+                            "context": entry.context,
+                            "confidence": 95 if "ice" in source or "turn" in source else 85
+                        }
+
+        # Fallback to any non-private extracted IP
+        for entry in reversed(self.ip_store.extracted_ips):
+            if entry.ip and not _is_private_ip(entry.ip):
+                return {
+                    "ip": entry.ip,
+                    "port": entry.port,
+                    "source": entry.source,
+                    "context": entry.context,
+                    "confidence": 75
+                }
+
+        return None
 
 
 # Singleton

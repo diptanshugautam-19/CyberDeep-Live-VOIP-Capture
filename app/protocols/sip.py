@@ -354,9 +354,9 @@ def parse_sip_ips(payload_bytes: bytes) -> list[dict]:
     if ufrag_m:
         ice_ufrag = ufrag_m.group(1)
 
-    # --- SIP Via ---
+    # --- SIP Via (full & compact 'v:') ---
     for m in re.finditer(
-        r'Via:\s*SIP/2\.0/(?:UDP|TCP|TLS|WS|WSS)\s+([^;:>\r\n]+)',
+        r'(?:Via|v):\s*SIP/2\.0/(?:UDP|TCP|TLS|WS|WSS)\s+([^;:>\r\n]+)',
         text, re.IGNORECASE
     ):
         ip, port = _parse_addr_advanced(m.group(1).strip())
@@ -366,6 +366,21 @@ def parse_sip_ips(payload_bytes: bytes) -> list[dict]:
                 'ip_version': 6 if ':' in ip else 4,
                 'confidence': 'medium',
                 'context': f"Via: {m.group(1).strip()}",
+                'ice_ufrag': ice_ufrag,
+            })
+
+    # --- SIP Record-Route & Route ---
+    for m in re.finditer(
+        r'(?:Record-Route|Route):\s*<sip:[^@]*@([^\s>;]+)',
+        text, re.IGNORECASE
+    ):
+        ip, port = _parse_addr_advanced(m.group(1).strip())
+        if ip:
+            results.append({
+                'source': 'sip_via', 'ip': ip, 'port': port,
+                'ip_version': 6 if ':' in ip else 4,
+                'confidence': 'medium',
+                'context': f"Route: {m.group(1).strip()}",
                 'ice_ufrag': ice_ufrag,
             })
 

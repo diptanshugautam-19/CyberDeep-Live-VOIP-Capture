@@ -5,105 +5,167 @@ logger = logging.getLogger(__name__)
 
 STUN_MAGIC_COOKIE = 0x2112A442
 
-# STUN message type definitions
+# STUN message type definitions (RFC 3489, RFC 5389, RFC 5766, RFC 8445, RFC 6062)
 MESSAGE_TYPES = {
     0x0001: "Binding Request",
     0x0101: "Binding Success Response",
     0x0111: "Binding Error Response",
+    0x0011: "Binding Indication",
     0x0003: "Allocate Request",
     0x0103: "Allocate Success Response",
     0x0113: "Allocate Error Response",
     0x0004: "Refresh Request",
     0x0104: "Refresh Success Response",
+    0x0114: "Refresh Error Response",
     0x0006: "Send Indication",
     0x0007: "Data Indication",
-    0x0009: "CreatePermission Request",
-    0x0109: "CreatePermission Success Response",
-    0x000a: "ChannelBind Request",
-    0x010a: "ChannelBind Success Response",
+    0x0008: "CreatePermission Request",
+    0x0108: "CreatePermission Success Response",
+    0x0118: "CreatePermission Error Response",
+    0x0009: "ChannelBind Request",
+    0x0109: "ChannelBind Success Response",
+    0x0119: "ChannelBind Error Response",
+    0x000A: "Connect Request",
+    0x010A: "Connect Success Response",
+    0x011A: "Connect Error Response",
+    0x000B: "ConnectionBind Request",
+    0x010B: "ConnectionBind Success Response",
+    0x011B: "ConnectionBind Error Response",
+    0x000C: "ConnectionAttempt Request",
+    0x010C: "ConnectionAttempt Success Response",
+    0x011C: "ConnectionAttempt Error Response",
 }
 
-# STUN attribute type definitions
+# STUN attribute type definitions (RFC 3489, RFC 5389, RFC 5766, RFC 8445, RFC 6062, RFC 5245)
 ATTRIBUTES = {
     0x0001: "MAPPED-ADDRESS",
+    0x0002: "RESPONSE-ADDRESS",
+    0x0003: "CHANGE-REQUEST",
+    0x0004: "SOURCE-ADDRESS",
+    0x0005: "CHANGED-ADDRESS",
     0x0006: "USERNAME",
+    0x0007: "PASSWORD",
     0x0008: "MESSAGE-INTEGRITY",
     0x0009: "ERROR-CODE",
-    0x000c: "CHANNEL-NUMBER",
-    0x000d: "LIFETIME",
+    0x000A: "UNKNOWN-ATTRIBUTES",
+    0x000B: "REFLECTED-FROM",
+    0x000C: "CHANNEL-NUMBER",
+    0x000D: "LIFETIME",
+    0x0010: "BANDWIDTH",
     0x0012: "XOR-PEER-ADDRESS",
     0x0013: "DATA",
     0x0014: "REALM",
     0x0015: "NONCE",
     0x0016: "XOR-RELAYED-ADDRESS",
+    0x0017: "REQUESTED-ADDRESS-FAMILY",
     0x0018: "EVEN-PORT",
     0x0019: "REQUESTED-TRANSPORT",
-    0x001a: "DONT-FRAGMENT",
+    0x001A: "DONT-FRAGMENT",
+    0x001B: "ACCESS-TOKEN",
+    0x001C: "MESSAGE-INTEGRITY-SHA256",
+    0x001D: "PASSWORD-ALGORITHM",
+    0x001E: "USER-HASH",
     0x0020: "XOR-MAPPED-ADDRESS",
     0x0022: "RESERVATION-TOKEN",
     0x0024: "PRIORITY",
     0x0025: "USE-CANDIDATE",
+    0x0026: "PADDING",
+    0x0027: "RESPONSE-PORT",
+    0x002A: "CONNECTION-ID",
+    0x8000: "ADDITIONAL-VERSION",
+    0x8020: "XOR-MAPPED-ADDRESS-ALT",
     0x8022: "SOFTWARE",
     0x8023: "ALTERNATE-SERVER",
+    0x8025: "TRANSACTION-TRANSMIT-COUNTER",
+    0x8027: "CACHE-TIMEOUT",
     0x8028: "FINGERPRINT",
     0x8029: "ICE-CONTROLLED",
-    0x802a: "ICE-CONTROLLING",
-    0x802b: "RESPONSE-ORIGIN",
-    0x802c: "OTHER-ADDRESS",
+    0x802A: "ICE-CONTROLLING",
+    0x802B: "RESPONSE-ORIGIN",
+    0x802C: "OTHER-ADDRESS",
+    0x802D: "ECN-CHECK-CAPABILITY",
+    0x802E: "THIRD-PARTY-AUTHORIZATION",
+    0x8050: "MOBILITY-TICKET",
 }
 
 
 def decode_xor_mapped_address(mv: memoryview, transaction_id: bytes, magic_cookie: int = STUN_MAGIC_COOKIE) -> tuple[str, int]:
-    """Decode XOR-MAPPED-ADDRESS, XOR-RELAYED-ADDRESS, or XOR-PEER-ADDRESS.
-
-    Uses memoryview for zero-copy access to the underlying buffer.
-    """
+    """Decode XOR-MAPPED-ADDRESS, XOR-RELAYED-ADDRESS, or XOR-PEER-ADDRESS (RFC 5389 §15.2 + multi-offset fallback)."""
     if len(mv) < 4:
         raise ValueError(f"XOR-MAPPED-ADDRESS too short: {len(mv)} bytes")
 
-    family = struct.unpack_from(">H", mv, 1)[0]
-    xor_port = struct.unpack_from(">H", mv, 3)[0]
+    # Try standard RFC 5389 offsets first, with multi-offset fallbacks for non-standard stacks
+    family_offsets = [1, 0, 2]
+    for fam_off in family_offsets:
+        if fam_off < len(mv):
+            family = mv[fam_off]
+            if family in (1, 2):
+                break
+    else:
+        family = mv[1]
+
+    # Try port at offset 2, 3, 1
+    port_offsets = [2, 3, 1]
+    xor_port = 0
+    for p_off in port_offsets:
+        if p_off + 2 <= len(mv):
+            xor_port = struct.unpack_from(">H", mv, p_off)[0]
+            break
+
+    port = xor_port ^ (magic_cookie >> 16)
 
     if family == 1:  # IPv4
-        if len(mv) < 9:
-            raise ValueError("IPv4 XOR-MAPPED-ADDRESS incomplete")
-        xor_address = struct.unpack_from(">I", mv, 5)[0]
-        port = xor_port ^ (magic_cookie >> 16)
-        address = xor_address ^ magic_cookie
-        ip = ".".join(str((address >> (24 - 8 * i)) & 0xFF) for i in range(4))
-        return ip, port
+        # Multi-offset address scanning: try offset 4 (RFC 5389), then offset 5, offset 3
+        addr_offsets = [4, 5, 3]
+        for a_off in addr_offsets:
+            if len(mv) >= a_off + 4:
+                xor_address = struct.unpack_from(">I", mv, a_off)[0]
+                address = xor_address ^ magic_cookie
+                ip = ".".join(str((address >> (24 - 8 * i)) & 0xFF) for i in range(4))
+                # Validate valid IPv4 address (not 0.0.0.0 or 255.255.255.255)
+                if not ip.startswith("0.") and not ip.startswith("255."):
+                    return ip, port
+
+        # Fallback default if offset 4 was requested
+        if len(mv) >= 8:
+            xor_address = struct.unpack_from(">I", mv, 4)[0]
+            address = xor_address ^ magic_cookie
+            ip = ".".join(str((address >> (24 - 8 * i)) & 0xFF) for i in range(4))
+            return ip, port
 
     elif family == 2:  # IPv6
-        if len(mv) < 21:
-            raise ValueError("IPv6 XOR-MAPPED-ADDRESS incomplete")
-        xor_address = bytes(mv[5:21])
-        port = xor_port ^ (magic_cookie >> 16)
-        xor_mask = struct.pack(">I", magic_cookie) + transaction_id
-        address_bytes = bytes(a ^ b for a, b in zip(xor_address, xor_mask))
-        import ipaddress
-        ip = str(ipaddress.ip_address(address_bytes))
-        return ip, port
+        addr_offsets = [4, 5, 3]
+        for a_off in addr_offsets:
+            if len(mv) >= a_off + 16:
+                xor_address = bytes(mv[a_off : a_off + 16])
+                xor_mask = struct.pack(">I", magic_cookie) + transaction_id
+                address_bytes = bytes(a ^ b for a, b in zip(xor_address, xor_mask))
+                try:
+                    import ipaddress
+                    ip = str(ipaddress.ip_address(address_bytes))
+                    return ip, port
+                except Exception:
+                    pass
 
-    else:
-        raise ValueError(f"Unknown address family: {family}")
+    raise ValueError("Could not decode XOR-MAPPED-ADDRESS across offsets")
 
 
 def parse_mapped_address(mv: memoryview) -> tuple[str, int]:
-    """Decode non-XOR MAPPED-ADDRESS using zero-copy memoryview."""
+    """Decode non-XOR MAPPED-ADDRESS (RFC 5389 §15.1)."""
     if len(mv) < 4:
         raise ValueError("MAPPED-ADDRESS too short")
-    family = struct.unpack_from(">H", mv, 1)[0]
-    port = struct.unpack_from(">H", mv, 3)[0]
+    family = mv[1]
+    port = struct.unpack_from(">H", mv, 2)[0]
     if family == 1:  # IPv4
-        if len(mv) < 9:
+        if len(mv) < 8:
             raise ValueError("IPv4 MAPPED-ADDRESS incomplete")
-        ip = ".".join(str(b) for b in bytes(mv[5:9]))
+        ip = ".".join(str(b) for b in bytes(mv[4:8]))
         return ip, port
     elif family == 2:  # IPv6
-        if len(mv) < 21:
+        if len(mv) < 20:
             raise ValueError("IPv6 MAPPED-ADDRESS incomplete")
         import ipaddress
-        ip = str(ipaddress.ip_address(bytes(mv[5:21])))
+        ip = str(ipaddress.ip_address(bytes(mv[4:20])))
         return ip, port
     else:
         raise ValueError(f"Unknown address family: {family}")
@@ -173,13 +235,22 @@ def parse_stun_packet(payload_bytes: bytes) -> dict | None:
             if attr_name in ("XOR-MAPPED-ADDRESS", "XOR-RELAYED-ADDRESS", "XOR-PEER-ADDRESS"):
                 try:
                     ip, port = decode_xor_mapped_address(val_mv, transaction_id)
+                    # NAT64 / 464XLAT Unwrap: check for well-known prefix 64:ff9b::/96
+                    if ip.startswith("64:ff9b::"):
+                        try:
+                            # Extract embedded IPv4 bytes from last 32 bits
+                            raw_ipv4_bytes = bytes.fromhex(ip.replace("64:ff9b::", "").replace(":", ""))
+                            if len(raw_ipv4_bytes) == 4:
+                                ip = ".".join(str(b) for b in raw_ipv4_bytes)
+                        except Exception:
+                            pass
                     fields[attr_name.lower().replace("-", "_")] = {"ip": ip, "port": port}
                 except Exception:
                     pass
-            elif attr_name == "MAPPED-ADDRESS":
+            elif attr_name in ("MAPPED-ADDRESS", "RESPONSE-ORIGIN", "OTHER-ADDRESS", "ALTERNATE-SERVER"):
                 try:
                     ip, port = parse_mapped_address(val_mv)
-                    fields["mapped_address"] = {"ip": ip, "port": port}
+                    fields[attr_name.lower().replace("-", "_")] = {"ip": ip, "port": port}
                 except Exception:
                     pass
             elif attr_name == "USERNAME":
@@ -278,7 +349,7 @@ def parse_stun_binding_for_ice(payload_bytes: bytes) -> dict | None:
         "use_candidate":   fields.get("use_candidate", False),
         "priority":        fields.get("priority"),
         "ufrag":           ufrag,
-        "xor_mapped":      fields.get("xor_mapped_address"),
+        "xor_mapped":      fields.get("xor_mapped_address") or fields.get("mapped_address"),
         "is_controlling":  "ice_controlling" in fields,
         "is_controlled":   "ice_controlled" in fields,
         "transaction_id":  fields.get("transaction_id", ""),

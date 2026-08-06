@@ -225,7 +225,7 @@ function getPacketDetails(pkt) {
 
 // ─── Components ───
 function Header(props){
-  const {isCapturing,onToggle,elapsed,investigationId,interfaces,selectedIface,onIfaceChange,bpfFilter,onBpfChange,onRefreshInterfaces,onDownloadPcap}=props;
+  const {isCapturing,onToggle,elapsed,investigationId,interfaces,selectedIface,onIfaceChange,bpfFilter,onBpfChange,onRefreshInterfaces,onDownloadPcap,onRestartServer}=props;
 
   const options = interfaces.map(function(i){
     const isObj = typeof i === 'object' && i !== null;
@@ -300,11 +300,19 @@ function Header(props){
         h('input',{className:'input-cyber',style:{padding:'4px 8px',height:'32px'},value:bpfFilter,onChange:e=>onBpfChange(e.target.value),disabled:isCapturing})
       ),
       h('div',{style:{display:'flex',flexDirection:'column',gap:'6px',alignItems:'stretch',alignSelf:'flex-end'}},
-        !isCapturing && investigationId && investigationId !== '—' && h('button',{
-          onClick: onDownloadPcap,
-          className: 'btn-cyber-secondary',
-          style: { height: '30px', fontSize: '11px', padding: '0 12px', background: 'rgba(6, 182, 212, 0.15)', color: 'var(--accent-cyan)', border: '1px solid var(--accent-cyan)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }
-        }, h(IconDownload), ' Save PCAP File'),
+        h('div',{style:{display:'flex',gap:'6px'}},
+          !isCapturing && investigationId && investigationId !== '—' && h('button',{
+            onClick: onDownloadPcap,
+            className: 'btn-cyber-secondary',
+            style: { height: '32px', fontSize: '11px', padding: '0 12px', background: 'rgba(6, 182, 212, 0.15)', color: 'var(--accent-cyan)', border: '1px solid var(--accent-cyan)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }
+          }, h(IconDownload), ' Save PCAP File'),
+          h('button',{
+            onClick: onRestartServer,
+            className: 'btn-cyber-secondary',
+            title: 'Reset backend engines & auto-resume capture',
+            style: { height: '32px', fontSize: '11px', padding: '0 12px', background: 'rgba(234, 179, 8, 0.15)', color: 'var(--accent-yellow)', border: '1px solid var(--accent-yellow)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }
+          }, h(IconRefresh), ' Refresh Server')
+        ),
         h('button',{onClick:onToggle,className:'btn-cyber '+(isCapturing?'recording':''),style:{height:'32px',padding:'0 20px'}},isCapturing?h(IconSquare):h(IconPlay),isCapturing?'Stop Capture':'Start Capture')
       )
     )
@@ -1333,6 +1341,7 @@ function App(){
   const startTimeRef=useRef(null);
   const seqRef=useRef(0);
   const stepRef=useRef(0);
+  const resolvedIPsRef=useRef(new Set());
 
   // UTC clock update in header
   useEffect(()=>{
@@ -1353,6 +1362,8 @@ function App(){
     loadInterfaces();
     loadInvestigations();
     checkCaptureStatus();
+    addLog('CyberDEEP VoIP Forensics Console initialized.', 'info', 'INFO');
+    addLog('System ready — select network interface & click Start Capture.', 'info', 'INFO');
   },[]);
 
   async function checkCaptureStatus() {
@@ -1512,6 +1523,97 @@ function App(){
         });
       }
 
+      const isPub = function(ipStr) {
+        if (!ipStr) return false;
+        return !(ipStr.startsWith('192.168.') || ipStr.startsWith('10.') || ipStr.startsWith('127.') || ipStr.startsWith('172.16.') || ipStr.startsWith('169.254.') || ipStr.startsWith('::1') || ipStr.startsWith('fe80:'));
+      };
+
+      const targetIP = isPub(msg.destination_ip) ? msg.destination_ip : (isPub(msg.source_ip) ? msg.source_ip : null);
+
+      if (targetIP) {
+        setActiveIPs(function(prev) {
+          if (prev.some(function(x){ return x.ip === targetIP; })) return prev;
+          return prev.concat([{
+            ip: targetIP,
+            asn: 'Resolving...',
+            org: 'Live Packet Target',
+            city: '',
+            country: '',
+            state: '',
+            lat: 0,
+            lon: 0,
+            isp: 'Resolving...'
+          }]);
+        });
+
+        setProfile(function(p) {
+          if (p.ip && p.isVoip && p.ip !== targetIP) return p;
+          return {
+            ip: targetIP,
+            city: p.ip === targetIP ? p.city : '',
+            country: p.ip === targetIP ? p.country : '',
+            state: p.ip === targetIP ? p.state : '',
+            lat: p.ip === targetIP ? p.lat : 0,
+            lon: p.ip === targetIP ? p.lon : 0,
+            asn: p.ip === targetIP ? p.asn : 'Resolving...',
+            isp: p.ip === targetIP ? p.isp : 'Resolving...',
+            org: p.ip === targetIP ? p.org : 'Live Packet Target',
+            risk: p.ip === targetIP ? p.risk : 0,
+            isVoip: true
+          };
+        });
+
+        // Trigger immediate automatic background lookup using our telecom API & offline ASN fallback engine
+        if (!resolvedIPsRef.current.has(targetIP)) {
+          resolvedIPsRef.current.add(targetIP);
+          api('/api/geoip/lookup?ip=' + encodeURIComponent(targetIP)).then(function(g) {
+            if (g && g.status === 'success') {
+              const rawAsn = g.as || g.asn || 'AS0';
+              const cleanAsn = rawAsn.replace(/^AS/i, '').trim() || '—';
+              const resolvedOrg = g.org || g.isp || g.asname || 'Resolved Target';
+              const resolvedIsp = g.isp || g.org || g.asname || '';
+
+              setActiveIPs(function(prev) {
+                const idx = prev.findIndex(function(x){ return x.ip === targetIP; });
+                const entry = {
+                  ip: targetIP,
+                  asn: cleanAsn,
+                  org: resolvedOrg,
+                  city: g.city || '',
+                  country: g.country || '',
+                  state: g.regionName || g.region || '',
+                  lat: g.lat || g.latitude || 0,
+                  lon: g.lon || g.longitude || 0,
+                  isp: resolvedIsp
+                };
+                if (idx >= 0) { const next = [...prev]; next[idx] = entry; return next; }
+                return [...prev, entry];
+              });
+
+              setProfile(function(p) {
+                if (p.ip && p.isVoip && p.ip !== targetIP) return p;
+                return {
+                  ip: targetIP,
+                  city: g.city || '',
+                  country: g.country || '',
+                  state: g.regionName || g.region || '',
+                  lat: g.lat || g.latitude || 0,
+                  lon: g.lon || g.longitude || 0,
+                  asn: cleanAsn,
+                  isp: resolvedIsp,
+                  org: resolvedOrg,
+                  risk: 0,
+                  isVoip: true
+                };
+              });
+            }
+          }).catch(function(){});
+        }
+
+        if(stepRef.current===4) advanceMilestone(); // step 5: IP Extraction
+        if(stepRef.current===5) advanceMilestone(); // step 6: Geo Mapping
+      }
+
       if(stepRef.current===1 && (proto==='STUN'||proto==='SIP'||proto==='RTP'||proto==='SRTP')){
         advanceMilestone(); // step 2: Call Detection
       }
@@ -1527,16 +1629,20 @@ function App(){
       
       setActiveIPs(prev => {
         const idx = prev.findIndex(x => x.ip === ip);
+        const resolvedOrg = g.asn_org || g.isp || g.org || 'Local Lookup';
+        const resolvedIsp = g.isp || g.asn_org || g.org || '';
+        const rawAsn = g.asn || 'AS0';
+        const cleanAsn = rawAsn.replace(/^AS/i, '').trim() || '—';
         const entry = {
           ip: ip,
-          asn: g.asn || 'AS0',
-          org: g.isp || g.org || 'Local Lookup',
+          asn: cleanAsn,
+          org: resolvedOrg,
           city: g.city || '',
           country: g.country || '',
           state: g.region || '',
           lat: g.latitude || 0,
           lon: g.longitude || 0,
-          isp: g.isp || ''
+          isp: resolvedIsp
         };
         if(idx>=0){ const next=[...prev]; next[idx]=entry; return next; }
         return [...prev, entry];
@@ -1546,6 +1652,8 @@ function App(){
       if(!isPrivate){
         setProfile(p => {
           if(p.ip && p.isVoip && p.ip !== ip) return p;
+          const resolvedOrg = g.asn_org || g.isp || g.org || '';
+          const resolvedIsp = g.isp || g.asn_org || g.org || '';
           return {
             ip: ip,
             city: g.city || '',
@@ -1554,8 +1662,8 @@ function App(){
             lat: g.latitude || 0,
             lon: g.longitude || 0,
             asn: g.asn || '',
-            isp: g.isp || '',
-            org: g.isp || '',
+            isp: resolvedIsp,
+            org: resolvedOrg,
             risk: t.risk_score || t.score || 0,
             isVoip: p.isVoip || false
           };
@@ -1825,9 +1933,37 @@ function App(){
       toast('Live capture active on '+selectedIface,'success');
     } catch(e){
       toast('Start failed: '+e.message,'error');
-      addLog('Capture startup failed: '+e.message,'warn','WARN');
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (wsRef.current) wsRef.current.close();
+      setIsCapturing(false);
+      setElapsed('0:00');
+      addLog('Capture stopped','warn','WARN');
     }
   }
+
+  const restartServer = async function() {
+    try {
+      addLog('Restarting server engines...', 'warn', 'WARN');
+      const res = await api('/api/system/restart', { method: 'POST' });
+      if (res.capturing_resumed) {
+        setIsCapturing(true);
+        addLog('Server restarted & live capture automatically resumed', 'success', 'INFO');
+        toast('Server refreshed — Capture resumed!', 'success');
+      } else {
+        if (isCapturing) {
+          if (timerRef.current) clearInterval(timerRef.current);
+          if (wsRef.current) wsRef.current.close();
+          setIsCapturing(false);
+          setElapsed('0:00');
+        }
+        addLog('Server engines restarted successfully', 'success', 'INFO');
+        toast('Server refreshed successfully', 'success');
+      }
+    } catch(err) {
+      addLog('Server restart failed: ' + err.message, 'error', 'ERROR');
+      toast('Failed to restart server: ' + err.message, 'error');
+    }
+  };
 
   async function stopCapture() {
     try { await api('/api/capture/stop',{method:'POST'}); } catch(e){}
@@ -1949,6 +2085,9 @@ function App(){
             h(TerminalLog,{logs}),
             h(GeoPanel,{profile: activeProfile, isCapturing: isCapturing})
           ),
+          h('div',{style:{marginBottom:'16px',height:'280px'}},
+            h(ASNMapper, { profile: activeProfile, activeIPs: displayedActiveIPs, selectedIP: selectedIP, setSelectedIP: setSelectedIP })
+          ),
           h(PacketViewer,{packets: displayedPackets}),
           h(InvestigationSummary,{profile: activeProfile, stats: displayedStats, investigationId: investigationId, isCapturing: isCapturing, onPromote: saveLiveCapture})
         );
@@ -1956,7 +2095,7 @@ function App(){
   }
 
   return h('div',{style:{display:'flex',flexDirection:'column',height:'100vh',background:'var(--bg-primary)'},className:'cyber-grid'},
-    h(Header,{isCapturing,onToggle:toggleCapture,elapsed,investigationId,interfaces,selectedIface,onIfaceChange:setSelectedIface,bpfFilter,onBpfChange:setBpfFilter,onRefreshInterfaces:()=>loadInterfaces(true),onDownloadPcap:downloadPcap}),
+    h(Header,{isCapturing,onToggle:toggleCapture,elapsed,investigationId,interfaces,selectedIface,onIfaceChange:setSelectedIface,bpfFilter,onBpfChange:setBpfFilter,onRefreshInterfaces:()=>loadInterfaces(true),onDownloadPcap:downloadPcap,onRestartServer:restartServer}),
     h('div',{style:{display:'flex',flex:1,overflow:'hidden'}},
       h(Sidebar,{activeTab,setActiveTab,isCapturing}),
       h('main',{style:{flex:1,overflow:'auto',padding:'20px'}},
