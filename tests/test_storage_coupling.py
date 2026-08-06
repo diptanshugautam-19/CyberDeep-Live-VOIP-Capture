@@ -4,10 +4,14 @@ import uuid
 from unittest.mock import patch
 
 from app.storage.repair import repair_storage_integrity
-from app.storage.database import save_investigation, router, PACKETS_DB_PATH, PAYLOADS_DB_PATH, CACHE_DB_PATH
+from app.storage.database import save_investigation, router, init_db, PACKETS_DB_PATH, PAYLOADS_DB_PATH, CACHE_DB_PATH
 
 
 class TestStorageCoupling(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        init_db()
 
     def test_orphan_payload_quarantine_path(self):
         """
